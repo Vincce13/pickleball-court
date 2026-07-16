@@ -190,17 +190,21 @@ export default function BookingForm() {
 
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName)
 
-    const rows = selectedSlots.map((slot) => ({
-      name,
-      email,
-      phone,
-      booking_date: bookingDate,
-      start_time: slot,
-      end_time: addOneHour(slot),
-      status: 'pending',
-      proof_url: urlData.publicUrl,
-      amount: getSlotPrice(slot),
-    }))
+    const groupId = crypto.randomUUID()
+console.log('Generated groupId:', groupId)
+
+const rows = selectedSlots.map((slot) => ({
+  group_id: groupId,
+  name,
+  email,
+  phone,
+  booking_date: bookingDate,
+  start_time: slot,
+  end_time: addOneHour(slot),
+  status: 'pending',
+  proof_url: urlData.publicUrl,
+  amount: getSlotPrice(slot),
+}))
 
     const { error: insertError } = await supabase.from('bookings').insert(rows)
 
