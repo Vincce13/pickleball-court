@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, CheckCircle2, XCircle, Clock, ImageIcon, Loader2 } from 'lucide-react'
+import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain } from 'lucide-react'
 
 type Booking = {
   id: number
@@ -15,6 +15,7 @@ type Booking = {
   end_time: string
   status: string
   amount: number
+  refund_amount: number
   proof_url: string | null
 }
 
@@ -26,8 +27,9 @@ type GroupedBooking = {
   email: string
   phone: string
   booking_date: string
-  slots: { start: string; end: string }[]
+  slots: { id: number; start: string; end: string; amount: number }[]
   totalAmount: number
+  totalRefunded: number
   status: string
   proof_url: string | null
 }
@@ -43,6 +45,32 @@ function formatSlotRange(start: string, end: string) {
   return `${formatHourShort(start)}-${formatHourShort(end)}`
 }
 
+function toMinutes(time: string) {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
+}
+
+function calculateRefundPreview(
+  slots: { start: string; end: string; amount: number }[],
+  rainStart: string
+) {
+  const rainMinutes = toMinutes(rainStart)
+  let total = 0
+  for (const slot of slots) {
+    const startMin = toMinutes(slot.start)
+    const endMin = toMinutes(slot.end)
+    const duration = endMin - startMin
+    if (rainMinutes <= startMin) {
+      total += slot.amount
+    } else if (rainMinutes >= endMin) {
+      total += 0
+    } else {
+      total += Math.round(slot.amount * ((endMin - rainMinutes) / duration))
+    }
+  }
+  return total
+}
+
 function groupBookings(bookings: Booking[]): GroupedBooking[] {
   const map = new Map<string, GroupedBooking>()
 
@@ -52,8 +80,9 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
 
     if (existing) {
       existing.ids.push(b.id)
-      existing.slots.push({ start: b.start_time, end: b.end_time })
+      existing.slots.push({ id: b.id, start: b.start_time, end: b.end_time, amount: b.amount })
       existing.totalAmount += b.amount
+      existing.totalRefunded += b.refund_amount ?? 0
     } else {
       map.set(key, {
         key,
@@ -63,8 +92,9 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
         email: b.email,
         phone: b.phone,
         booking_date: b.booking_date,
-        slots: [{ start: b.start_time, end: b.end_time }],
+        slots: [{ id: b.id, start: b.start_time, end: b.end_time, amount: b.amount }],
         totalAmount: b.amount,
+        totalRefunded: b.refund_amount ?? 0,
         status: b.status,
         proof_url: b.proof_url,
       })
@@ -80,10 +110,16 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
 export default function AdminDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('pending')
+  const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'refunded'>('pending')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [updatingKey, setUpdatingKey] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  const [refundOpenKey, setRefundOpenKey] = useState<string | null>(null)
+  const [rainStartInput, setRainStartInput] = useState('')
+  const [refundPreview, setRefundPreview] = useState<number | null>(null)
+  const [submittingRefund, setSubmittingRefund] = useState(false)
+
   const router = useRouter()
 
   async function loadBookings() {
@@ -147,6 +183,8 @@ export default function AdminDashboard() {
             ? `Booking confirmed for ${booking.name}${emailNote}`
             : status === 'cancelled'
             ? `Booking cancelled for ${booking.name}${emailNote}`
+            : status === 'completed'
+            ? `Booking marked complete for ${booking.name}.`
             : 'Booking marked as pending.',
         type: 'success',
       })
@@ -157,6 +195,42 @@ export default function AdminDashboard() {
     }
   }
 
+  function openRefund(key: string) {
+    setRefundOpenKey(key)
+    setRainStartInput('')
+    setRefundPreview(null)
+  }
+
+  function calculatePreview(booking: GroupedBooking) {
+    if (!rainStartInput) return
+    setRefundPreview(calculateRefundPreview(booking.slots, rainStartInput))
+  }
+
+  async function submitRefund(booking: GroupedBooking) {
+    if (!rainStartInput) return
+    setSubmittingRefund(true)
+
+    try {
+      const res = await fetch('/api/admin/bookings/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: booking.ids, rainStart: rainStartInput }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        setToast({ message: 'Something went wrong processing the refund.', type: 'error' })
+        return
+      }
+
+      setToast({ message: `Refunded ₱${data.totalRefund} to ${booking.name}.`, type: 'success' })
+      setRefundOpenKey(null)
+      await loadBookings()
+    } finally {
+      setSubmittingRefund(false)
+    }
+  }
+
   async function handleLogout() {
     await fetch('/api/admin/logout', { method: 'POST' })
     router.push('/admin/login')
@@ -164,13 +238,20 @@ export default function AdminDashboard() {
   }
 
   const grouped = groupBookings(bookings)
-  const filtered = filter === 'all' ? grouped : grouped.filter((b) => b.status === filter)
+  const filtered =
+    filter === 'all'
+      ? grouped
+      : filter === 'refunded'
+      ? grouped.filter((b) => b.totalRefunded > 0)
+      : grouped.filter((b) => b.status === filter)
 
-  const statusColors: Record<string, string> = {
-    pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    confirmed: 'bg-[#9ED9B0]/15 text-[#9ED9B0] border-[#9ED9B0]/30',
-    cancelled: 'bg-red-500/15 text-red-300 border-red-500/30',
-  }
+ const statusColors: Record<string, string> = {
+  pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
+  confirmed: 'bg-[#9ED9B0]/15 text-[#9ED9B0] border-[#9ED9B0]/30',
+  cancelled: 'bg-red-500/15 text-red-300 border-red-500/30',
+  completed: 'bg-blue-400/15 text-blue-300 border-blue-400/30',
+  refunded: 'bg-purple-400/15 text-purple-300 border-purple-400/30',
+}
 
   return (
     <main className="min-h-[100dvh] bg-[#13291F] text-[#F1F2ED] px-4 sm:px-8 py-8">
@@ -186,7 +267,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="flex gap-2 mb-6 flex-wrap">
-          {(['pending', 'confirmed', 'cancelled', 'all'] as const).map((f) => (
+          {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled', 'all'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -196,7 +277,13 @@ export default function AdminDashboard() {
                   : 'bg-white/5 text-[#B9C3BC] hover:bg-white/10'
               }`}
             >
-              {f} {f !== 'all' && `(${grouped.filter((b) => b.status === f).length})`}
+              {f}{' '}
+              {f !== 'all' &&
+                `(${
+                  f === 'refunded'
+                    ? grouped.filter((b) => b.totalRefunded > 0).length
+                    : grouped.filter((b) => b.status === f).length
+                })`}
             </button>
           ))}
         </div>
@@ -212,79 +299,159 @@ export default function AdminDashboard() {
               return (
                 <div
                   key={b.key}
-                  className="bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-xl p-4 border border-[#9ED9B0]/20 flex flex-col sm:flex-row sm:items-center gap-4"
+                  className="bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-xl p-4 border border-[#9ED9B0]/20 flex flex-col gap-4"
                 >
-                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                    <div>
-                      <p className="text-[#8A948E] text-xs">Customer</p>
-                      <p className="font-medium">{b.name}</p>
-                      <p className="text-[#8A948E] text-xs">{b.phone}</p>
-                    </div>
-                    <div>
-                      <p className="text-[#8A948E] text-xs">Date & Time</p>
-                      <p className="font-medium">{b.booking_date}</p>
-                      <p className="text-[#8A948E] text-xs">
-                        {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
-                        {b.slots.length > 1 ? 's' : ''})
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[#8A948E] text-xs">Amount</p>
-                      <p className="font-medium text-[#9ED9B0]">₱{b.totalAmount}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-1 rounded-full border capitalize ${statusColors[b.status]}`}>
-                        {b.status}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <p className="text-[#8A948E] text-xs">Customer</p>
+                        <p className="font-medium">{b.name}</p>
+                        <p className="text-[#8A948E] text-xs">{b.email}</p>
+                        <p className="text-[#8A948E] text-xs">{b.phone}</p>
+                      </div>
+                      <div>
+                        <p className="text-[#8A948E] text-xs">Date & Time</p>
+                        <p className="font-medium">{b.booking_date}</p>
+                        <p className="text-[#8A948E] text-xs">
+                          {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
+                          {b.slots.length > 1 ? 's' : ''})
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[#8A948E] text-xs">Amount</p>
+                        {filter === 'refunded' ? (
+                          <p className="font-medium text-purple-300">₱{b.totalRefunded}</p>
+                        ) : b.totalRefunded > 0 ? (
+                          <>
+                            <p className="font-medium text-[#9ED9B0]">
+                              ₱{b.totalAmount - b.totalRefunded}{' '}
+                              <span className="text-xs text-[#8A948E] line-through">₱{b.totalAmount}</span>
+                            </p>
+                            <p className="text-xs text-purple-300 mt-0.5">₱{b.totalRefunded} refunded</p>
+                          </>
+                        ) : (
+                          <p className="font-medium text-[#9ED9B0]">₱{b.totalAmount}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                      <span
+                       className={`text-xs px-2 py-1 rounded-full border capitalize ${
+                       filter === 'refunded' ? statusColors.refunded : statusColors[b.status]
+                       }`}
+                        >
+                       {filter === 'refunded' ? 'refunded' : b.status}
                       </span>
+                    </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isUpdating ? (
+                        <div className="flex items-center gap-2 px-3 text-sm text-[#9ED9B0]">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+                        </div>
+                      ) : (
+                        <>
+                          {b.proof_url && (
+                            <button
+                              onClick={() => setPreviewUrl(b.proof_url)}
+                              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                              title="View payment proof"
+                            >
+                              <ImageIcon className="w-4 h-4 text-[#9ED9B0]" />
+                            </button>
+                          )}
+
+                          {b.status !== 'confirmed' && b.status !== 'completed' && (
+                            <button
+                              onClick={() => updateStatus(b, 'confirmed')}
+                              className="p-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 transition-colors"
+                              title="Confirm"
+                            >
+                              <CheckCircle2 className="w-4 h-4 text-[#9ED9B0]" />
+                            </button>
+                          )}
+
+                          {b.status !== 'cancelled' && b.status !== 'completed' && (
+                          <button
+                           onClick={() => updateStatus(b, 'cancelled')}
+                           className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                           title="Cancel"
+                            >
+                           <XCircle className="w-4 h-4 text-red-300" />
+                           </button>
+                           )}
+                          {b.status === 'confirmed' && (
+                            <button
+                              onClick={() => updateStatus(b, 'completed')}
+                              className="p-2 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
+                              title="Mark complete"
+                            >
+                              <CheckCheck className="w-4 h-4 text-blue-300" />
+                            </button>
+                          )}
+
+                          {b.status === 'completed' && b.totalRefunded === 0 && (
+                          <button
+                           onClick={() => openRefund(b.key)}
+                           className="p-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 transition-colors"
+                           title="Process refund"
+                           >
+    <CloudRain className="w-4 h-4 text-purple-300" />
+  </button>
+)}
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {isUpdating ? (
-                      <div className="flex items-center gap-2 px-3 text-sm text-[#9ED9B0]">
-                        <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+                  {refundOpenKey === b.key && (
+                    <div className="w-full bg-white/5 border border-purple-400/30 rounded-lg p-4 space-y-3">
+                      <p className="text-sm text-[#B9C3BC]">
+                        What time did it start raining? We'll refund the unused portion of the booking.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="time"
+                          value={rainStartInput}
+                          onChange={(e) => {
+                            setRainStartInput(e.target.value)
+                            setRefundPreview(null)
+                          }}
+                          className="px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-purple-400"
+                        />
+                        <button
+                          onClick={() => calculatePreview(b)}
+                          disabled={!rainStartInput}
+                          className="px-4 py-2 rounded-lg bg-purple-400/20 text-purple-200 text-sm font-medium hover:bg-purple-400/30 disabled:opacity-40 transition-colors"
+                        >
+                          Calculate
+                        </button>
+                        <button
+                          onClick={() => setRefundOpenKey(null)}
+                          className="px-4 py-2 rounded-lg bg-white/5 text-[#B9C3BC] text-sm hover:bg-white/10 transition-colors"
+                        >
+                          Cancel
+                        </button>
                       </div>
-                    ) : (
-                      <>
-                        {b.proof_url && (
-                          <button
-                            onClick={() => setPreviewUrl(b.proof_url)}
-                            className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                            title="View payment proof"
-                          >
-                            <ImageIcon className="w-4 h-4 text-[#9ED9B0]" />
-                          </button>
-                        )}
-                        {b.status !== 'confirmed' && (
-                          <button
-                            onClick={() => updateStatus(b, 'confirmed')}
-                            className="p-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 transition-colors"
-                            title="Confirm"
-                          >
-                            <CheckCircle2 className="w-4 h-4 text-[#9ED9B0]" />
-                          </button>
-                        )}
-                        {b.status !== 'cancelled' && (
-                          <button
-                            onClick={() => updateStatus(b, 'cancelled')}
-                            className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-colors"
-                            title="Cancel"
-                          >
-                            <XCircle className="w-4 h-4 text-red-300" />
-                          </button>
-                        )}
-                        {b.status !== 'pending' && (
-                          <button
-                            onClick={() => updateStatus(b, 'pending')}
-                            className="p-2 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 transition-colors"
-                            title="Mark pending"
-                          >
-                            <Clock className="w-4 h-4 text-yellow-300" />
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
+
+                      {refundPreview !== null && (
+                        <div className="flex items-center justify-between bg-purple-400/10 border border-purple-400/20 rounded-lg px-4 py-3">
+                          <span className="text-sm text-[#B9C3BC]">Refund amount</span>
+                          <span className="text-xl font-bold text-purple-300">₱{refundPreview}</span>
+                        </div>
+                      )}
+
+                      {refundPreview !== null && (
+                        <button
+                          onClick={() => submitRefund(b)}
+                          disabled={submittingRefund}
+                          className="w-full bg-purple-400 text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-purple-300 active:scale-95 disabled:opacity-50 transition-all"
+                        >
+                          {submittingRefund ? 'Processing...' : `Confirm Refund of ₱${refundPreview}`}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
