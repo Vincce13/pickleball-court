@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     try {
       await resend.emails.send({
-        from: 'TDA Pickleball Court <onboarding@resend.dev>',
+        from: 'TDA Pickleball Court <noreply@tdacourt.jo3.org>',
         to: process.env.ADMIN_EMAIL!,
         subject: `New booking from ${name} — needs review`,
         html: `
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
 
   try {
     await resend.emails.send({
-      from: 'TDA Pickleball Court <onboarding@resend.dev>',
+      from: 'TDA Pickleball Court <noreply@tdacourt.jo3.org>',
       to: email,
       subject,
       html,
