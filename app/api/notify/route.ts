@@ -22,43 +22,36 @@ export async function POST(req: NextRequest) {
     .join(', ')
 
   // Admin notification — sent to you, not the customer, whenever a new booking comes in
- if (status === 'new_booking') {
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/admin`
+  if (status === 'new_booking') {
+    const dashboardUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/admin`
 
-  try {
-    await resend.emails.send({
-      from: 'TDA Pickleball Court <onboarding@resend.dev>',
-      to: process.env.ADMIN_EMAIL!,
-      subject: `New booking from ${name} — needs review`,
-      html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-          <h2 style="color: #3F6B52;">New Booking Received</h2>
-          <p>A new booking just came in and is waiting for payment verification.</p>
-          <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
-            <tr><td style="padding: 8px 0; color: #666;">Customer</td><td style="padding: 8px 0; font-weight: bold;">${name}</td></tr>
-            <tr><td style="padding: 8px 0; color: #666;">Email</td><td style="padding: 8px 0; font-weight: bold;">${email}</td></tr>
-            <tr><td style="padding: 8px 0; color: #666;">Date</td><td style="padding: 8px 0; font-weight: bold;">${bookingDate}</td></tr>
-            <tr><td style="padding: 8px 0; color: #666;">Time</td><td style="padding: 8px 0; font-weight: bold;">${slotsList}</td></tr>
-            <tr><td style="padding: 8px 0; color: #666;">Amount</td><td style="padding: 8px 0; font-weight: bold;">₱${totalAmount}</td></tr>
-          </table>
-          
-            href="${dashboardUrl}"
-            style="display: inline-block; background: #3F6B52; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 999px; font-weight: bold; margin-top: 8px;"
-          >
-            Open Admin Dashboard
-          </a>
-          <p style="color: #999; font-size: 12px; margin-top: 16px;">
-            If the button doesn't work, copy this link: ${dashboardUrl}
-          </p>
-        </div>
-      `,
-    })
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('Admin notify email error:', err)
-    return NextResponse.json({ error: 'Failed to send admin email' }, { status: 500 })
+    try {
+      await resend.emails.send({
+        from: 'TDA Pickleball Court <onboarding@resend.dev>',
+        to: process.env.ADMIN_EMAIL!,
+        subject: `New booking from ${name} — needs review`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+            <h2 style="color: #3F6B52;">New Booking Received</h2>
+            <p>A new booking just came in and is waiting for payment verification.</p>
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+              <tr><td style="padding: 8px 0; color: #666;">Customer</td><td style="padding: 8px 0; font-weight: bold;">${name}</td></tr>
+              <tr><td style="padding: 8px 0; color: #666;">Email</td><td style="padding: 8px 0; font-weight: bold;">${email}</td></tr>
+              <tr><td style="padding: 8px 0; color: #666;">Date</td><td style="padding: 8px 0; font-weight: bold;">${bookingDate}</td></tr>
+              <tr><td style="padding: 8px 0; color: #666;">Time</td><td style="padding: 8px 0; font-weight: bold;">${slotsList}</td></tr>
+              <tr><td style="padding: 8px 0; color: #666;">Amount</td><td style="padding: 8px 0; font-weight: bold;">₱${totalAmount}</td></tr>
+            </table>
+            <a href="${dashboardUrl}" style="display: inline-block; background: #3F6B52; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 999px; font-weight: bold; margin-top: 8px;">Open Admin Dashboard</a>
+            <p style="color: #999; font-size: 12px; margin-top: 16px;">If the button doesn't work, copy this link: ${dashboardUrl}</p>
+          </div>
+        `,
+      })
+      return NextResponse.json({ success: true })
+    } catch (err) {
+      console.error('Admin notify email error:', err)
+      return NextResponse.json({ error: 'Failed to send admin email' }, { status: 500 })
+    }
   }
-}
 
   let subject = ''
   let html = ''
