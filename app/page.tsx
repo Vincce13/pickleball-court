@@ -100,8 +100,8 @@ function TodayAvailability() {
           <Wallet className="w-5 h-5 text-[#9ED9B0]" />
         </div>
         <div>
-          <p className={`${bebas.className} text-2xl text-[#9ED9B0] leading-none`}>₱300 / hour</p>
-          <p className="text-xs text-[#8A948E] mt-1">Flat rate, any time slot</p>
+          <p className={`${bebas.className} text-2xl text-[#9ED9B0] leading-none`}>₱150 - ₱200 / HOUR </p>
+          <p className="text-xs text-[#8A948E] mt-1">₱150 (6 AM - 4 PM) • ₱200 (5 PM - 12 AM)</p>
         </div>
       </div>
 
