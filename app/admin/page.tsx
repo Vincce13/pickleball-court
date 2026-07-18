@@ -124,12 +124,29 @@ export default function AdminDashboard() {
         return
       }
 
+      let emailNote = ''
+      if (status === 'confirmed' || status === 'cancelled') {
+        const emailRes = await fetch('/api/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: booking.email,
+            name: booking.name,
+            bookingDate: booking.booking_date,
+            slots: booking.slots,
+            totalAmount: booking.totalAmount,
+            status,
+          }),
+        })
+        emailNote = emailRes.ok ? ' — email sent.' : ' — but email failed to send.'
+      }
+
       setToast({
         message:
           status === 'confirmed'
-            ? `Booking confirmed for ${booking.name}.`
+            ? `Booking confirmed for ${booking.name}${emailNote}`
             : status === 'cancelled'
-            ? `Booking cancelled for ${booking.name}.`
+            ? `Booking cancelled for ${booking.name}${emailNote}`
             : 'Booking marked as pending.',
         type: 'success',
       })
@@ -287,9 +304,7 @@ export default function AdminDashboard() {
       {toast && (
         <div
           className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium animate-fade-up ${
-            toast.type === 'success'
-              ? 'bg-[#9ED9B0] text-[#13291F]'
-              : 'bg-red-500 text-white'
+            toast.type === 'success' ? 'bg-[#9ED9B0] text-[#13291F]' : 'bg-red-500 text-white'
           }`}
         >
           {toast.message}
