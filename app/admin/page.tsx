@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain } from 'lucide-react'
+import MonthlyReport from '@/components/MonthlyReport'
+import { BarChart3 } from 'lucide-react'
 
 type Booking = {
   id: number
@@ -119,6 +121,7 @@ export default function AdminDashboard() {
   const [rainStartInput, setRainStartInput] = useState('')
   const [refundPreview, setRefundPreview] = useState<number | null>(null)
   const [submittingRefund, setSubmittingRefund] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
 
   const router = useRouter()
 
@@ -245,26 +248,40 @@ export default function AdminDashboard() {
       ? grouped.filter((b) => b.totalRefunded > 0)
       : grouped.filter((b) => b.status === filter)
 
- const statusColors: Record<string, string> = {
-  pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-  confirmed: 'bg-[#9ED9B0]/15 text-[#9ED9B0] border-[#9ED9B0]/30',
-  cancelled: 'bg-red-500/15 text-red-300 border-red-500/30',
-  completed: 'bg-blue-400/15 text-blue-300 border-blue-400/30',
-  refunded: 'bg-purple-400/15 text-purple-300 border-purple-400/30',
-}
+  const statusColors: Record<string, string> = {
+    pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
+    confirmed: 'bg-[#9ED9B0]/15 text-[#9ED9B0] border-[#9ED9B0]/30',
+    cancelled: 'bg-red-500/15 text-red-300 border-red-500/30',
+    completed: 'bg-blue-400/15 text-blue-300 border-blue-400/30',
+    refunded: 'bg-purple-400/15 text-purple-300 border-purple-400/30',
+  }
 
   return (
     <main className="min-h-[100dvh] bg-[#13291F] text-[#F1F2ED] px-4 sm:px-8 py-8">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-2xl font-bold">Bookings Dashboard</h1>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
-          >
-            <LogOut className="w-4 h-4" /> Log Out
-          </button>
-        </div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <h1 className="text-2xl font-bold">Bookings Dashboard</h1>
+
+  <div className="flex flex-wrap items-center gap-3">
+
+    <button
+      onClick={() => setReportOpen(true)}
+      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] transition-colors"
+    >
+      <BarChart3 className="w-4 h-4" />
+      Report
+    </button>
+
+    <button
+      onClick={handleLogout}
+      className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
+    >
+      <LogOut className="w-4 h-4" />
+      Log Out
+    </button>
+
+  </div>
+</div>
 
         <div className="flex gap-2 mb-6 flex-wrap">
           {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled', 'all'] as const).map((f) => (
@@ -301,50 +318,66 @@ export default function AdminDashboard() {
                   key={b.key}
                   className="bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-xl p-4 border border-[#9ED9B0]/20 flex flex-col gap-4"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <p className="text-[#8A948E] text-xs">Customer</p>
-                        <p className="font-medium">{b.name}</p>
-                        <p className="text-[#8A948E] text-xs">{b.email}</p>
-                        <p className="text-[#8A948E] text-xs">{b.phone}</p>
-                      </div>
-                      <div>
-                        <p className="text-[#8A948E] text-xs">Date & Time</p>
-                        <p className="font-medium">{b.booking_date}</p>
-                        <p className="text-[#8A948E] text-xs">
-                          {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
-                          {b.slots.length > 1 ? 's' : ''})
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[#8A948E] text-xs">Amount</p>
-                        {filter === 'refunded' ? (
-                          <p className="font-medium text-purple-300">₱{b.totalRefunded}</p>
-                        ) : b.totalRefunded > 0 ? (
-                          <>
-                            <p className="font-medium text-[#9ED9B0]">
-                              ₱{b.totalAmount - b.totalRefunded}{' '}
-                              <span className="text-xs text-[#8A948E] line-through">₱{b.totalAmount}</span>
-                            </p>
-                            <p className="text-xs text-purple-300 mt-0.5">₱{b.totalRefunded} refunded</p>
-                          </>
-                        ) : (
-                          <p className="font-medium text-[#9ED9B0]">₱{b.totalAmount}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                      <span
-                       className={`text-xs px-2 py-1 rounded-full border capitalize ${
-                       filter === 'refunded' ? statusColors.refunded : statusColors[b.status]
-                       }`}
-                        >
-                       {filter === 'refunded' ? 'refunded' : b.status}
-                      </span>
-                    </div>
-                    </div>
+                 <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+<div
+  className="
+    flex-1
+    grid
+    gap-4
+    text-sm
 
-                    <div className="flex items-center gap-2">
+    grid-cols-1
+    lg:grid-cols-[1.4fr_1.4fr_0.9fr_0.8fr]
+  "
+>
+
+ 
+  <div className="self-start">
+    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Customer</p>
+    <p className="font-medium leading-5">{b.name}</p>
+    <p className="text-[#8A948E] text-xs">{b.email}</p>
+    <p className="text-[#8A948E] text-xs">{b.phone}</p>
+  </div>
+
+  <div className="self-start">
+    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Date & Time</p>
+    <p className="font-medium leading-5">{b.booking_date}</p>
+    <p className="text-[#8A948E] text-xs">
+      {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
+      {b.slots.length > 1 ? 's' : ''})
+    </p>
+  </div>
+
+  <div className="self-start">
+    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Amount</p>
+    {filter === 'refunded' ? (
+      <p className="font-medium leading-5 text-purple-300">₱{b.totalRefunded}</p>
+    ) : b.totalRefunded > 0 ? (
+      <>
+        <p className="font-medium leading-5 text-[#9ED9B0]">
+          ₱{b.totalAmount - b.totalRefunded}{' '}
+          <span className="text-xs text-[#8A948E] line-through">₱{b.totalAmount}</span>
+        </p>
+       <p className="text-xs text-purple-300 mt-1 whitespace-nowrap">₱{b.totalRefunded} refunded</p>
+      </>
+    ) : (
+      <p className="font-medium leading-6 text-[#9ED9B0] whitespace-nowrap">₱{b.totalAmount}</p>
+    )}
+  </div>
+
+  <div className="self-start">
+    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Status</p>
+   <span
+  className={`inline-flex items-center justify-center text-xs px-3 py-1 rounded-full border capitalize whitespace-nowrap ${
+        filter === 'refunded' ? statusColors.refunded : statusColors[b.status]
+      }`}
+    >
+      {filter === 'refunded' ? 'refunded' : b.status}
+    </span>
+  </div>
+</div>
+
+                <div className="flex flex-wrap justify-start lg:justify-center items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-white/10">
                       {isUpdating ? (
                         <div className="flex items-center gap-2 px-3 text-sm text-[#9ED9B0]">
                           <Loader2 className="w-4 h-4 animate-spin" /> Updating...
@@ -372,14 +405,15 @@ export default function AdminDashboard() {
                           )}
 
                           {b.status !== 'cancelled' && b.status !== 'completed' && (
-                          <button
-                           onClick={() => updateStatus(b, 'cancelled')}
-                           className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-colors"
-                           title="Cancel"
+                            <button
+                              onClick={() => updateStatus(b, 'cancelled')}
+                              className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                              title="Cancel"
                             >
-                           <XCircle className="w-4 h-4 text-red-300" />
-                           </button>
-                           )}
+                              <XCircle className="w-4 h-4 text-red-300" />
+                            </button>
+                          )}
+
                           {b.status === 'confirmed' && (
                             <button
                               onClick={() => updateStatus(b, 'completed')}
@@ -391,14 +425,14 @@ export default function AdminDashboard() {
                           )}
 
                           {b.status === 'completed' && b.totalRefunded === 0 && (
-                          <button
-                           onClick={() => openRefund(b.key)}
-                           className="p-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 transition-colors"
-                           title="Process refund"
-                           >
-    <CloudRain className="w-4 h-4 text-purple-300" />
-  </button>
-)}
+                            <button
+                              onClick={() => openRefund(b.key)}
+                              className="p-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 transition-colors"
+                              title="Process refund"
+                            >
+                              <CloudRain className="w-4 h-4 text-purple-300" />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -458,6 +492,41 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
+
+      {reportOpen && (
+  <div
+    className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+    onClick={() => setReportOpen(false)}
+  >
+    <div
+  className="
+    w-full
+    max-w-7xl
+    max-h-[95vh]
+    overflow-y-auto
+    rounded-xl
+    bg-[#13291F]
+    border
+    border-[#9ED9B0]/20
+    p-4
+    sm:p-6
+  "
+>
+     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+       <h2 className="text-xl sm:text-2xl font-bold">Monthly Report</h2>
+
+        <button
+          onClick={() => setReportOpen(false)}
+          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20"
+        >
+          Close
+        </button>
+      </div>
+
+      <MonthlyReport />
+    </div>
+  </div>
+)}
 
       {previewUrl && (
         <div
