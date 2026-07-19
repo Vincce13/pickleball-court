@@ -112,7 +112,7 @@ const netRevenue = grossRevenue - refunds
 
     y -= 18
 
-    page.drawText(`Gross Revenue: ₱${grossRevenue}`, {
+    page.drawText(`Gross Revenue: PHP${grossRevenue}`, {
       x: 50,
       y,
       size: 12,
@@ -121,7 +121,7 @@ const netRevenue = grossRevenue - refunds
 
     y -= 18
 
-    page.drawText(`Refunds: ₱${refunds}`, {
+    page.drawText(`Refunds: PHP${refunds}`, {
       x: 50,
       y,
       size: 12,
@@ -130,7 +130,7 @@ const netRevenue = grossRevenue - refunds
 
     y -= 18
 
-    page.drawText(`Net Revenue: ₱${netRevenue}`, {
+    page.drawText(`Net Revenue: PHP${netRevenue}`, {
       x: 50,
       y,
       size: 12,
@@ -179,7 +179,7 @@ for (const booking of grouped as any[]) {
   )
 
   page.drawText(
-    `₱${booking.total_amount - booking.refund_amount}`,
+    `PHP${booking.total_amount - booking.refund_amount}`,
     {
       x: 480,
       y,
@@ -202,15 +202,13 @@ return new Response(new Uint8Array(pdfBytes), {
   },
 })
   } catch (err) {
-    console.error(err)
+    console.error("PDF ERROR:", err)
 
     return NextResponse.json(
       {
-        error: 'Unable to generate PDF.',
+        error: String(err),
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     )
-  }
+}
 }

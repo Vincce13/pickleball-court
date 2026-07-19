@@ -495,11 +495,16 @@ export default function AdminDashboard() {
 
       {reportOpen && (
   <div
-    className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
-    onClick={() => setReportOpen(false)}
-  >
-    <div
+  className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+  onClick={(e) => {
+    if (e.target === e.currentTarget) {
+      setReportOpen(false)
+    }
+  }}
+>
+   <div
   className="
+    relative
     w-full
     max-w-7xl
     max-h-[95vh]
@@ -511,6 +516,7 @@ export default function AdminDashboard() {
     p-4
     sm:p-6
   "
+  onClick={(e) => e.stopPropagation()}
 >
      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
        <h2 className="text-xl sm:text-2xl font-bold">Monthly Report</h2>
