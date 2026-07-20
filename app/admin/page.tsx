@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain } from 'lucide-react'
+import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2 } from 'lucide-react'
 import MonthlyReport from '@/components/MonthlyReport'
-import { BarChart3 } from 'lucide-react'
+
 
 type Booking = {
   id: number
@@ -34,6 +34,14 @@ type GroupedBooking = {
   totalRefunded: number
   status: string
   proof_url: string | null
+}
+
+type BlockedSlot = {
+  id: number
+  booking_date: string
+  start_time: string
+  end_time: string
+  reason: string
 }
 
 function formatHourShort(time: string) {
@@ -121,7 +129,20 @@ export default function AdminDashboard() {
   const [rainStartInput, setRainStartInput] = useState('')
   const [refundPreview, setRefundPreview] = useState<number | null>(null)
   const [submittingRefund, setSubmittingRefund] = useState(false)
+  const [rescheduleOpenKey, setRescheduleOpenKey] = useState<string | null>(null)
+const [newDate, setNewDate] = useState('')
+const [newStartTime, setNewStartTime] = useState('')
+const [newEndTime, setNewEndTime] = useState('')
+const [submittingReschedule, setSubmittingReschedule] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
+
+  const [blockOpen, setBlockOpen] = useState(false)
+  const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([])
+  const [blockDate, setBlockDate] = useState('')
+  const [blockStart, setBlockStart] = useState('')
+  const [blockEnd, setBlockEnd] = useState('')
+  const [blockReason, setBlockReason] = useState('')
+  const [submittingBlock, setSubmittingBlock] = useState(false)
 
   const router = useRouter()
 
@@ -133,8 +154,15 @@ export default function AdminDashboard() {
     setLoading(false)
   }
 
+  async function loadBlockedSlots() {
+    const res = await fetch('/api/admin/blocked-slots')
+    const data = await res.json()
+    if (res.ok) setBlockedSlots(data.blocked)
+  }
+
   useEffect(() => {
     loadBookings()
+    loadBlockedSlots()
   }, [])
 
   useEffect(() => {
@@ -234,6 +262,92 @@ export default function AdminDashboard() {
     }
   }
 
+ function openReschedule(key: string) {
+  setRefundOpenKey(null)
+  setRescheduleOpenKey(key)
+  setNewDate('')
+  setNewStartTime('')
+  setNewEndTime('')
+}
+
+async function submitReschedule(booking: GroupedBooking) {
+  if (!newDate || !newStartTime || !newEndTime) return
+
+  setSubmittingReschedule(true)
+
+  try {
+    const res = await fetch('/api/admin/bookings/reschedule', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ids: booking.ids,
+        bookingDate: newDate,
+        startTime: newStartTime,
+        endTime: newEndTime,
+      }),
+    })
+
+    if (!res.ok) {
+      setToast({
+        message: 'Unable to reschedule booking.',
+        type: 'error',
+      })
+      return
+    }
+
+    setToast({
+      message: 'Booking rescheduled successfully.',
+      type: 'success',
+    })
+
+    setRescheduleOpenKey(null)
+    await loadBookings()
+
+  } finally {
+    setSubmittingReschedule(false)
+  }
+}
+
+  async function submitBlock() {
+    if (!blockDate || !blockStart || !blockEnd || !blockReason) return
+    setSubmittingBlock(true)
+
+    try {
+      const res = await fetch('/api/admin/blocked-slots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingDate: blockDate,
+          startTime: blockStart,
+          endTime: blockEnd,
+          reason: blockReason,
+        }),
+      })
+
+      if (!res.ok) {
+        setToast({ message: 'Something went wrong blocking this slot.', type: 'error' })
+        return
+      }
+
+      setToast({ message: 'Slot blocked successfully.', type: 'success' })
+      setBlockDate('')
+      setBlockStart('')
+      setBlockEnd('')
+      setBlockReason('')
+      await loadBlockedSlots()
+    } finally {
+      setSubmittingBlock(false)
+    }
+  }
+
+  async function removeBlock(id: number) {
+    if (!confirm('Unblock this slot?')) return
+    await fetch(`/api/admin/blocked-slots/${id}`, { method: 'DELETE' })
+    await loadBlockedSlots()
+  }
+
   async function handleLogout() {
     await fetch('/api/admin/logout', { method: 'POST' })
     router.push('/admin/login')
@@ -242,11 +356,13 @@ export default function AdminDashboard() {
 
   const grouped = groupBookings(bookings)
   const filtered =
-    filter === 'all'
-      ? grouped
-      : filter === 'refunded'
-      ? grouped.filter((b) => b.totalRefunded > 0)
-      : grouped.filter((b) => b.status === filter)
+  filter === 'all'
+    ? grouped
+    : filter === 'refunded'
+    ? grouped.filter(
+        (b) => b.status === 'refunded' || b.totalRefunded > 0
+      )
+    : grouped.filter((b) => b.status === filter)
 
   const statusColors: Record<string, string> = {
     pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
@@ -259,29 +375,35 @@ export default function AdminDashboard() {
   return (
     <main className="min-h-[100dvh] bg-[#13291F] text-[#F1F2ED] px-4 sm:px-8 py-8">
       <div className="max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-  <h1 className="text-2xl font-bold">Bookings Dashboard</h1>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+          <h1 className="text-2xl font-bold">Bookings Dashboard</h1>
 
-  <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setReportOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] transition-colors"
+            >
+              <BarChart3 className="w-4 h-4" />
+              Report
+            </button>
 
-    <button
-      onClick={() => setReportOpen(true)}
-      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] transition-colors"
-    >
-      <BarChart3 className="w-4 h-4" />
-      Report
-    </button>
+            <button
+              onClick={() => setBlockOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 transition-colors"
+            >
+              <Ban className="w-4 h-4" />
+              Block Slot
+            </button>
 
-    <button
-      onClick={handleLogout}
-      className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
-    >
-      <LogOut className="w-4 h-4" />
-      Log Out
-    </button>
-
-  </div>
-</div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Log Out
+            </button>
+          </div>
+        </div>
 
         <div className="flex gap-2 mb-6 flex-wrap">
           {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled', 'all'] as const).map((f) => (
@@ -318,66 +440,69 @@ export default function AdminDashboard() {
                   key={b.key}
                   className="bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-xl p-4 border border-[#9ED9B0]/20 flex flex-col gap-4"
                 >
-                 <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-<div
-  className="
-    flex-1
-    grid
-    gap-4
-    text-sm
+                  <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                    <div
+                      className="
+                        flex-1
+                        grid
+                        gap-4
+                        text-sm
+                        grid-cols-1
+                        lg:grid-cols-[1.4fr_1.4fr_0.9fr_0.8fr]
+                      "
+                    >
+                      <div className="self-start">
+                        <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Customer</p>
+                        <p className="font-medium leading-5">{b.name}</p>
+                        <p className="text-[#8A948E] text-xs">{b.email}</p>
+                        <p className="text-[#8A948E] text-xs">{b.phone}</p>
+                      </div>
 
-    grid-cols-1
-    lg:grid-cols-[1.4fr_1.4fr_0.9fr_0.8fr]
-  "
->
+                      <div className="self-start">
+                        <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Date & Time</p>
+                        <p className="font-medium leading-5">{b.booking_date}</p>
+                        <p className="text-[#8A948E] text-xs">
+                          {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
+                          {b.slots.length > 1 ? 's' : ''})
+                        </p>
+                      </div>
 
- 
-  <div className="self-start">
-    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Customer</p>
-    <p className="font-medium leading-5">{b.name}</p>
-    <p className="text-[#8A948E] text-xs">{b.email}</p>
-    <p className="text-[#8A948E] text-xs">{b.phone}</p>
-  </div>
+                      <div className="self-start">
+                        <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Amount</p>
+                        {b.status === 'refunded' ? (
+                        <p className="font-medium leading-5 text-purple-300">
+                         ₱{b.totalAmount}
+                         </p>
+                         ) : filter === 'refunded' ? (
+                          <p className="font-medium leading-5 text-purple-300">₱{b.totalRefunded}</p>
+                        ) : b.totalRefunded > 0 ? (
+                          <>
+                            <p className="font-medium leading-5 text-[#9ED9B0]">
+                              ₱{b.totalAmount - b.totalRefunded}{' '}
+                              <span className="text-xs text-[#8A948E] line-through">₱{b.totalAmount}</span>
+                            </p>
+                            <p className="text-xs text-purple-300 mt-1 whitespace-nowrap">₱{b.totalRefunded} refunded</p>
+                          </>
+                        ) : (
+                          <p className="font-medium leading-6 text-[#9ED9B0] whitespace-nowrap">₱{b.totalAmount}</p>
+                        )}
+                      </div>
 
-  <div className="self-start">
-    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Date & Time</p>
-    <p className="font-medium leading-5">{b.booking_date}</p>
-    <p className="text-[#8A948E] text-xs">
-      {b.slots.map((s) => formatSlotRange(s.start, s.end)).join(', ')} ({b.slots.length}hr
-      {b.slots.length > 1 ? 's' : ''})
-    </p>
-  </div>
+                      <div className="self-start">
+                        <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Status</p>
+                        <span
+                          className={`inline-flex items-center justify-center text-xs px-3 py-1 rounded-full border capitalize whitespace-nowrap ${
+                            filter === 'refunded' ? statusColors.refunded : statusColors[b.status]
+                          }`}
+                        >
+                         {b.status === 'refunded' || filter === 'refunded'
+                          ? 'refunded'
+                          : b.status}
+                        </span>
+                      </div>
+                    </div>
 
-  <div className="self-start">
-    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Amount</p>
-    {filter === 'refunded' ? (
-      <p className="font-medium leading-5 text-purple-300">₱{b.totalRefunded}</p>
-    ) : b.totalRefunded > 0 ? (
-      <>
-        <p className="font-medium leading-5 text-[#9ED9B0]">
-          ₱{b.totalAmount - b.totalRefunded}{' '}
-          <span className="text-xs text-[#8A948E] line-through">₱{b.totalAmount}</span>
-        </p>
-       <p className="text-xs text-purple-300 mt-1 whitespace-nowrap">₱{b.totalRefunded} refunded</p>
-      </>
-    ) : (
-      <p className="font-medium leading-6 text-[#9ED9B0] whitespace-nowrap">₱{b.totalAmount}</p>
-    )}
-  </div>
-
-  <div className="self-start">
-    <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Status</p>
-   <span
-  className={`inline-flex items-center justify-center text-xs px-3 py-1 rounded-full border capitalize whitespace-nowrap ${
-        filter === 'refunded' ? statusColors.refunded : statusColors[b.status]
-      }`}
-    >
-      {filter === 'refunded' ? 'refunded' : b.status}
-    </span>
-  </div>
-</div>
-
-                <div className="flex flex-wrap justify-start lg:justify-center items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-white/10">
+                    <div className="flex flex-wrap justify-start lg:justify-center items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-white/10">
                       {isUpdating ? (
                         <div className="flex items-center gap-2 px-3 text-sm text-[#9ED9B0]">
                           <Loader2 className="w-4 h-4 animate-spin" /> Updating...
@@ -406,7 +531,11 @@ export default function AdminDashboard() {
 
                           {b.status !== 'cancelled' && b.status !== 'completed' && (
                             <button
-                              onClick={() => updateStatus(b, 'cancelled')}
+                              onClick={() => {
+                                if (confirm(`Are you sure you want to cancel ${b.name}'s booking?`)) {
+                                  updateStatus(b, 'cancelled')
+                                }
+                              }}
                               className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-colors"
                               title="Cancel"
                             >
@@ -414,15 +543,39 @@ export default function AdminDashboard() {
                             </button>
                           )}
 
-                          {b.status === 'confirmed' && (
-                            <button
-                              onClick={() => updateStatus(b, 'completed')}
-                              className="p-2 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
-                              title="Mark complete"
-                            >
-                              <CheckCheck className="w-4 h-4 text-blue-300" />
-                            </button>
-                          )}
+                         {b.status === 'confirmed' && (
+  <>
+    {/* Complete */}
+    <button
+      onClick={() => updateStatus(b, 'completed')}
+      className="p-2 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
+      title="Mark complete"
+    >
+      <CheckCheck className="w-4 h-4 text-blue-300" />
+    </button>
+
+    <button
+    onClick={() => openReschedule(b.key)}
+    className="p-2 rounded-lg bg-amber-400/10 hover:bg-amber-400/20 transition-colors"
+    title="Reschedule Booking"
+    >
+    <CalendarDays className="w-4 h-4 text-amber-300" />
+    </button>
+
+    {/* Refund */}
+    <button
+      onClick={() => {
+        if (confirm(`Move ${b.name}'s booking to Refunds?`)) {
+          updateStatus(b, 'refunded')
+        }
+      }}
+      className="p-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 transition-colors"
+      title="Refund Booking"
+    >
+      <CloudRain className="w-4 h-4 text-purple-300" />
+    </button>
+  </>
+)}
 
                           {b.status === 'completed' && b.totalRefunded === 0 && (
                             <button
@@ -439,6 +592,7 @@ export default function AdminDashboard() {
                   </div>
 
                   {refundOpenKey === b.key && (
+                    
                     <div className="w-full bg-white/5 border border-purple-400/30 rounded-lg p-4 space-y-3">
                       <p className="text-sm text-[#B9C3BC]">
                         What time did it start raining? We'll refund the unused portion of the booking.
@@ -467,6 +621,8 @@ export default function AdminDashboard() {
                           Cancel
                         </button>
                       </div>
+                       
+          
 
                       {refundPreview !== null && (
                         <div className="flex items-center justify-between bg-purple-400/10 border border-purple-400/20 rounded-lg px-4 py-3">
@@ -483,9 +639,83 @@ export default function AdminDashboard() {
                         >
                           {submittingRefund ? 'Processing...' : `Confirm Refund of ₱${refundPreview}`}
                         </button>
-                      )}
+                      )}    
                     </div>
                   )}
+
+                    {rescheduleOpenKey === b.key && (
+  <div className="w-full bg-white/5 border border-amber-400/30 rounded-lg p-4 space-y-4">
+
+    <p className="text-sm text-[#B9C3BC]">
+      Select the new booking schedule.
+    </p>
+
+    <div>
+      <label className="block text-xs mb-1 text-[#8A948E]">
+        New Date
+      </label>
+
+      <input
+        type="date"
+        value={newDate}
+        onChange={(e) => setNewDate(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
+      />
+    </div>
+
+    <div className="grid grid-cols-2 gap-3">
+
+      <div>
+        <label className="block text-xs mb-1 text-[#8A948E]">
+          Start
+        </label>
+
+        <input
+          type="time"
+          value={newStartTime}
+          onChange={(e) => setNewStartTime(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs mb-1 text-[#8A948E]">
+          End
+        </label>
+
+        <input
+          type="time"
+          value={newEndTime}
+          onChange={(e) => setNewEndTime(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
+        />
+      </div>
+
+    </div>
+
+    <div className="flex gap-2">
+
+      <button
+        onClick={() => submitReschedule(b)}
+        disabled={submittingReschedule}
+        className="flex-1 bg-amber-400 text-[#13291F] rounded-full py-2 font-semibold"
+      >
+        {submittingReschedule
+          ? 'Saving...'
+          : 'Confirm Reschedule'}
+      </button>
+
+      <button
+        onClick={() => setRescheduleOpenKey(null)}
+        className="px-5 rounded-full bg-white/10"
+      >
+        Cancel
+      </button>
+
+    </div>
+
+  </div>
+)}
                 </div>
               )
             })}
@@ -493,46 +723,137 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      
+
+      
+
       {reportOpen && (
-  <div
-  className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
-  onClick={(e) => {
-    if (e.target === e.currentTarget) {
-      setReportOpen(false)
-    }
-  }}
->
-   <div
-  className="
-    relative
-    w-full
-    max-w-7xl
-    max-h-[95vh]
-    overflow-y-auto
-    rounded-xl
-    bg-[#13291F]
-    border
-    border-[#9ED9B0]/20
-    p-4
-    sm:p-6
-  "
-  onClick={(e) => e.stopPropagation()}
->
-     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-       <h2 className="text-xl sm:text-2xl font-bold">Monthly Report</h2>
-
-        <button
-          onClick={() => setReportOpen(false)}
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20"
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setReportOpen(false)
+          }}
         >
-          Close
-        </button>
-      </div>
+          <div
+            className="relative w-full max-w-7xl max-h-[95vh] overflow-y-auto rounded-xl bg-[#13291F] border border-[#9ED9B0]/20 p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <h2 className="text-xl sm:text-2xl font-bold">Monthly Report</h2>
+              <button
+                onClick={() => setReportOpen(false)}
+                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20"
+              >
+                Close
+              </button>
+            </div>
+            <MonthlyReport />
+          </div>
+        </div>
+      )}
 
-      <MonthlyReport />
-    </div>
-  </div>
-)}
+      {blockOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setBlockOpen(false)
+          }}
+        >
+          <div
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-[#13291F] border border-red-500/20 p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-xl font-bold">Block a Slot</h2>
+              <button
+                onClick={() => setBlockOpen(false)}
+                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <div>
+                <label className="block text-xs text-[#8A948E] mb-1">Date</label>
+                <input
+                  type="date"
+                  value={blockDate}
+                  onChange={(e) => setBlockDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-red-400"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-[#8A948E] mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={blockStart}
+                    onChange={(e) => setBlockStart(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-red-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#8A948E] mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={blockEnd}
+                    onChange={(e) => setBlockEnd(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-red-400"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-[#8A948E] mb-1">Reason</label>
+                <input
+                  type="text"
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  placeholder="e.g. Maintenance, Private event"
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] outline-none focus:border-red-400"
+                />
+              </div>
+              <button
+                onClick={submitBlock}
+                disabled={submittingBlock || !blockDate || !blockStart || !blockEnd || !blockReason}
+                className="w-full bg-red-500 text-white font-semibold py-2.5 rounded-full hover:bg-red-400 active:scale-95 disabled:opacity-40 transition-all"
+              >
+                {submittingBlock ? 'Blocking...' : 'Block This Slot'}
+              </button>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold mb-2">Currently Blocked</p>
+              {blockedSlots.length === 0 ? (
+                <p className="text-xs text-[#8A948E]">No blocked slots.</p>
+              ) : (
+                <div className="space-y-2">
+                  {blockedSlots.map((slot) => (
+                    <div
+                      key={slot.id}
+                      className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">
+                          {slot.booking_date} · {slot.start_time.slice(0, 5)}-{slot.end_time.slice(0, 5)}
+                        </p>
+                        <p className="text-xs text-red-300">{slot.reason}</p>
+                      </div>
+                      <button
+                        onClick={() => removeBlock(slot.id)}
+                        className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                        title="Unblock"
+                      >
+                        <Trash2 className="w-4 h-4 text-red-300" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewUrl && (
         <div

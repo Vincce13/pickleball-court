@@ -58,6 +58,7 @@ export default function BookingForm() {
   const [selectedSlots, setSelectedSlots] = useState<string[]>([])
   const [takenSlots, setTakenSlots] = useState<string[]>([])
   const [heldByOthers, setHeldByOthers] = useState<string[]>([])
+  const [blockedSlots, setBlockedSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [conflictNotice, setConflictNotice] = useState<string | null>(null)
   const [holdError, setHoldError] = useState<string | null>(null)
@@ -92,7 +93,18 @@ export default function BookingForm() {
         .eq('booking_date', bookingDate)
         .gt('expires_at', new Date().toISOString())
 
-      setTakenSlots((bookingsData ?? []).map((b) => b.start_time.slice(0, 5)))
+        const { data: blockedData } = await supabase
+  .from('blocked_slots')
+  .select('start_time')
+  .eq('booking_date', bookingDate)
+
+      setTakenSlots(
+  (bookingsData ?? []).map((b) => b.start_time.slice(0,5))
+)
+
+setBlockedSlots(
+  (blockedData ?? []).map((b) => b.start_time.slice(0,5))
+)
       setHeldByOthers(
         (holdsData ?? [])
           .filter((h) => h.session_id !== sessionId)
@@ -462,10 +474,16 @@ export default function BookingForm() {
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {TIME_SLOTS.map((slot) => {
-                      const isTaken = takenSlots.includes(slot)
-                      const isHeld = heldByOthers.includes(slot)
-                      const isDisabled = isTaken || isHeld
-                      const isSelected = selectedSlots.includes(slot)
+                     const isTaken = takenSlots.includes(slot)
+const isHeld = heldByOthers.includes(slot)
+const isBlocked = blockedSlots.includes(slot)
+
+const isDisabled =
+  isTaken ||
+  isHeld ||
+  isBlocked
+
+const isSelected = selectedSlots.includes(slot)
                       const isPopped = poppedSlot === slot
                       return (
                         <button
@@ -476,19 +494,41 @@ export default function BookingForm() {
                           className={`flex flex-col items-center text-sm py-2 rounded-lg border transition-all duration-150 ${
                             isPopped ? 'scale-90' : 'scale-100'
                           } ${
-                            isTaken
-                              ? 'bg-white/5 text-[#5A645E] border-white/10 cursor-not-allowed line-through'
-                              : isHeld
-                              ? 'bg-yellow-500/5 text-yellow-500/60 border-yellow-500/20 cursor-not-allowed'
-                              : isSelected
-                              ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
-                              : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60 hover:bg-white/10'
+                           isTaken
+  ? 'bg-white/5 text-[#5A645E] border-white/10 cursor-not-allowed line-through'
+
+  : isBlocked
+  ? 'bg-red-600/15 text-red-300 border-red-500 cursor-not-allowed'
+
+  : isHeld
+  ? 'bg-yellow-500/5 text-yellow-500/60 border-yellow-500/20 cursor-not-allowed'
+
+  : isSelected
+  ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
+
+  : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60 hover:bg-white/10'
                           }`}
                         >
                           <span>{formatSlotRange(slot)}</span>
-                          <span className={`text-[10px] ${isSelected ? 'text-[#13291F]/70' : isHeld ? 'text-yellow-500/50' : 'text-[#8A948E]'}`}>
-                            {isHeld ? 'Held' : `₱${getSlotPrice(slot)}`}
-                          </span>
+                         <span
+  className={`text-[10px] ${
+    isSelected
+      ? 'text-[#13291F]/70'
+      : isBlocked
+      ? 'text-red-300'
+      : isHeld
+      ? 'text-yellow-500/60'
+      : 'text-[#8A948E]'
+  }`}
+>
+  {isTaken
+    ? 'Booked'
+    : isBlocked
+    ? 'Blocked'
+    : isHeld
+    ? 'Held'
+    : `₱${getSlotPrice(slot)}`}
+</span>
                         </button>
                       )
                     })}
