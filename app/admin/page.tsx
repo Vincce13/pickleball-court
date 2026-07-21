@@ -275,6 +275,10 @@ async function submitReschedule(booking: GroupedBooking) {
 
   setSubmittingReschedule(true)
 
+  // Capture the OLD schedule before we overwrite anything
+  const oldDate = booking.booking_date
+  const oldSlots = booking.slots.map((s) => ({ start: s.start, end: s.end }))
+
   try {
     const res = await fetch('/api/admin/bookings/reschedule', {
       method: 'POST',
@@ -297,8 +301,23 @@ async function submitReschedule(booking: GroupedBooking) {
       return
     }
 
+    const emailRes = await fetch('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: booking.email,
+        name: booking.name,
+        bookingDate: newDate,
+        slots: [{ start: newStartTime, end: newEndTime }],
+        totalAmount: booking.totalAmount,
+        status: 'rescheduled',
+        oldDate,
+        oldSlots,
+      }),
+    })
+
     setToast({
-      message: 'Booking rescheduled successfully.',
+      message: `Booking rescheduled successfully${emailRes.ok ? ' — email sent.' : ' — but email failed to send.'}`,
       type: 'success',
     })
 

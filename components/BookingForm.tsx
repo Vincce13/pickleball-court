@@ -579,7 +579,7 @@ const isSelected = selectedSlots.includes(slot)
             <div className="relative w-52 h-52 mx-auto">
               <div className="absolute inset-0 rounded-2xl animate-pulse-ring" />
               <div className="relative w-full h-full bg-white p-2 rounded-2xl border-2 border-[#9ED9B0] flex items-center justify-center">
-                <img src="/payment-qr.png" alt="Payment QR code" className="w-full h-full object-contain rounded-lg" />
+                <img src="/payment-qr.jpg" alt="Payment QR code" className="w-full h-full object-contain rounded-lg" />
               </div>
               <div className="absolute -top-2 -right-2 bg-[#9ED9B0] text-[#13291F] rounded-full p-1.5 shadow-md">
                 <QrCode className="w-4 h-4" />

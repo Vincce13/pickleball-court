@@ -11,7 +11,7 @@ function formatHourShort(time: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { email, name, bookingDate, slots, totalAmount, status } = await req.json()
+  const { email, name, bookingDate, slots, totalAmount, status, oldDate, oldSlots } = await req.json()
 
   if (!email || !name || !bookingDate || !slots || !status) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -99,6 +99,27 @@ export async function POST(req: NextRequest) {
           <tr><td style="padding: 8px 0; color: #666;">Time</td><td style="padding: 8px 0; font-weight: bold;">${slotsList}</td></tr>
         </table>
         <p>If you believe this was a mistake, please contact us or make a new booking.</p>
+        <p style="color: #999; font-size: 12px;">TDA Pickleball Court</p>
+      </div>
+    `
+  } else if (status === 'rescheduled') {
+    subject = 'Your TDA Pickleball Court booking has been rescheduled'
+
+    const oldSlotsList = (oldSlots ?? [])
+      .map((s: { start: string; end: string }) => `${formatHourShort(s.start)} - ${formatHourShort(s.end)}`)
+      .join(', ')
+
+    html = `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #3F6B52;">Booking Rescheduled</h2>
+        <p>Hi ${name},</p>
+        <p>Your court reservation has been moved to a new date and time:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+          <tr><td style="padding: 8px 0; color: #666;">Previous</td><td style="padding: 8px 0;"><s>${oldDate ?? ''} — ${oldSlotsList}</s></td></tr>
+          <tr><td style="padding: 8px 0; color: #666;">New Date</td><td style="padding: 8px 0; font-weight: bold;">${bookingDate}</td></tr>
+          <tr><td style="padding: 8px 0; color: #666;">New Time</td><td style="padding: 8px 0; font-weight: bold;">${slotsList}</td></tr>
+        </table>
+        <p>If this doesn't work for you, please contact us to arrange another time.</p>
         <p style="color: #999; font-size: 12px;">TDA Pickleball Court</p>
       </div>
     `
