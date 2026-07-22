@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2 } from 'lucide-react'
+import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2, CalendarSearch } from 'lucide-react'
 import MonthlyReport from '@/components/MonthlyReport'
 
 
@@ -44,6 +44,14 @@ type BlockedSlot = {
   reason: string
 }
 
+const SCHEDULE_SLOTS = [
+  '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
+  '12:00', '13:00', '14:00', '15:00', '16:00', '17:00',
+  '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
+]
+
+// NOTE: These are pure helper functions (no hooks), so it's fine for them
+// to live at module scope, outside the component.
 function formatHourShort(time: string) {
   const [h, m] = time.split(':').map(Number)
   const period = h >= 12 ? 'PM' : 'AM'
@@ -52,7 +60,16 @@ function formatHourShort(time: string) {
 }
 
 function formatSlotRange(start: string, end: string) {
-  return `${formatHourShort(start)}-${formatHourShort(end)}`
+  return `${formatHourShort(start)} - ${formatHourShort(end)}`
+}
+
+// Given a slot's start time (e.g. "06:00"), returns the end time one hour later (e.g. "07:00")
+function addOneHour(time: string) {
+  const [h, m] = time.split(':').map(Number)
+  const totalMinutes = h * 60 + m + 60
+  const endH = Math.floor(totalMinutes / 60) % 24
+  const endM = totalMinutes % 60
+  return `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`
 }
 
 function toMinutes(time: string) {
@@ -121,19 +138,21 @@ export default function AdminDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'refunded'>('pending')
+  const [search, setSearch] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [updatingKey, setUpdatingKey] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const today = new Date().toISOString().split('T')[0]
 
   const [refundOpenKey, setRefundOpenKey] = useState<string | null>(null)
   const [rainStartInput, setRainStartInput] = useState('')
   const [refundPreview, setRefundPreview] = useState<number | null>(null)
   const [submittingRefund, setSubmittingRefund] = useState(false)
   const [rescheduleOpenKey, setRescheduleOpenKey] = useState<string | null>(null)
-const [newDate, setNewDate] = useState('')
-const [newStartTime, setNewStartTime] = useState('')
-const [newEndTime, setNewEndTime] = useState('')
-const [submittingReschedule, setSubmittingReschedule] = useState(false)
+  const [newDate, setNewDate] = useState('')
+  const [newStartTime, setNewStartTime] = useState('')
+  const [newEndTime, setNewEndTime] = useState('')
+  const [submittingReschedule, setSubmittingReschedule] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
   const [blockOpen, setBlockOpen] = useState(false)
@@ -144,7 +163,31 @@ const [submittingReschedule, setSubmittingReschedule] = useState(false)
   const [blockReason, setBlockReason] = useState('')
   const [submittingBlock, setSubmittingBlock] = useState(false)
 
+  // --- Schedule modal state (moved inside the component — this was the bug) ---
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0])
+  const [scheduleData, setScheduleData] = useState<{
+    bookings: { start_time: string; end_time: string; name: string; status: string }[]
+    blocked: { start_time: string; end_time: string; reason: string }[]
+  } | null>(null)
+  const [scheduleLoading, setScheduleLoading] = useState(false)
+
   const router = useRouter()
+
+  async function loadSchedule(date: string) {
+    setScheduleLoading(true)
+    try {
+      const res = await fetch(`/api/admin/schedule?date=${date}`)
+      const data = await res.json()
+      if (res.ok) setScheduleData(data)
+    } finally {
+      setScheduleLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (scheduleOpen) loadSchedule(scheduleDate)
+  }, [scheduleOpen, scheduleDate])
 
   async function loadBookings() {
     setLoading(true)
@@ -262,72 +305,73 @@ const [submittingReschedule, setSubmittingReschedule] = useState(false)
     }
   }
 
- function openReschedule(key: string) {
-  setRefundOpenKey(null)
-  setRescheduleOpenKey(key)
-  setNewDate('')
-  setNewStartTime('')
-  setNewEndTime('')
-}
-
-async function submitReschedule(booking: GroupedBooking) {
-  if (!newDate || !newStartTime || !newEndTime) return
-
-  setSubmittingReschedule(true)
-
-  // Capture the OLD schedule before we overwrite anything
-  const oldDate = booking.booking_date
-  const oldSlots = booking.slots.map((s) => ({ start: s.start, end: s.end }))
-
-  try {
-    const res = await fetch('/api/admin/bookings/reschedule', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ids: booking.ids,
-        bookingDate: newDate,
-        startTime: newStartTime,
-        endTime: newEndTime,
-      }),
-    })
-
-    if (!res.ok) {
-      setToast({
-        message: 'Unable to reschedule booking.',
-        type: 'error',
-      })
-      return
-    }
-
-    const emailRes = await fetch('/api/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: booking.email,
-        name: booking.name,
-        bookingDate: newDate,
-        slots: [{ start: newStartTime, end: newEndTime }],
-        totalAmount: booking.totalAmount,
-        status: 'rescheduled',
-        oldDate,
-        oldSlots,
-      }),
-    })
-
-    setToast({
-      message: `Booking rescheduled successfully${emailRes.ok ? ' — email sent.' : ' — but email failed to send.'}`,
-      type: 'success',
-    })
-
-    setRescheduleOpenKey(null)
-    await loadBookings()
-
-  } finally {
-    setSubmittingReschedule(false)
+  function openReschedule(key: string) {
+    setRefundOpenKey(null)
+    setRescheduleOpenKey(key)
+    setNewDate('')
+    setNewStartTime('')
+    setNewEndTime('')
   }
-}
+
+  async function submitReschedule(booking: GroupedBooking) {
+    if (!newDate || !newStartTime || !newEndTime) return
+
+    setSubmittingReschedule(true)
+
+    // Capture the OLD schedule before we overwrite anything
+    const oldDate = booking.booking_date
+    const oldSlots = booking.slots.map((s) => ({ start: s.start, end: s.end }))
+
+    try {
+      const res = await fetch('/api/admin/bookings/reschedule', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ids: booking.ids,
+          bookingDate: newDate,
+          startTime: newStartTime,
+          endTime: newEndTime,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setToast({
+          message: data.error ?? 'Unable to reschedule booking.',
+          type: 'error',
+        })
+        return
+      }
+
+      const emailRes = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: booking.email,
+          name: booking.name,
+          bookingDate: newDate,
+          slots: [{ start: newStartTime, end: newEndTime }],
+          totalAmount: booking.totalAmount,
+          status: 'rescheduled',
+          oldDate,
+          oldSlots,
+        }),
+      })
+
+      setToast({
+        message: `Booking rescheduled successfully${emailRes.ok ? ' — email sent.' : ' — but email failed to send.'}`,
+        type: 'success',
+      })
+
+      setRescheduleOpenKey(null)
+      await loadBookings()
+
+    } finally {
+      setSubmittingReschedule(false)
+    }
+  }
 
   async function submitBlock() {
     if (!blockDate || !blockStart || !blockEnd || !blockReason) return
@@ -373,16 +417,48 @@ async function submitReschedule(booking: GroupedBooking) {
     router.refresh()
   }
 
-  const grouped = groupBookings(bookings)
-  const filtered =
-  filter === 'all'
-    ? grouped
-    : filter === 'refunded'
-    ? grouped.filter(
-        (b) => b.status === 'refunded' || b.totalRefunded > 0
-      )
-    : grouped.filter((b) => b.status === filter)
+const grouped = groupBookings(bookings)
 
+
+
+let filtered = grouped.filter((b) => {
+  const matchesFilter =
+    filter === 'all'
+      ? true
+      : filter === 'refunded'
+      ? b.status === 'refunded' || b.totalRefunded > 0
+      : b.status === filter
+
+  const keyword = search.toLowerCase()
+
+  const matchesSearch =
+    b.name.toLowerCase().includes(keyword) ||
+    b.email.toLowerCase().includes(keyword) ||
+    b.phone.toLowerCase().includes(keyword) ||
+    b.booking_date.toLowerCase().includes(keyword) ||
+    b.status.toLowerCase().includes(keyword)
+
+  return matchesFilter && matchesSearch
+})
+
+if (filter === 'confirmed') {
+  filtered.sort((a, b) => {
+    const aToday = a.booking_date === today
+    const bToday = b.booking_date === today
+
+    // Today's bookings first
+    if (aToday && !bToday) return -1
+    if (!aToday && bToday) return 1
+
+    // Earlier dates first
+    if (a.booking_date !== b.booking_date) {
+      return a.booking_date.localeCompare(b.booking_date)
+    }
+
+    // Earlier time first
+    return a.slots[0].start.localeCompare(b.slots[0].start)
+  })
+}
   const statusColors: Record<string, string> = {
     pending: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
     confirmed: 'bg-[#9ED9B0]/15 text-[#9ED9B0] border-[#9ED9B0]/30',
@@ -415,6 +491,14 @@ async function submitReschedule(booking: GroupedBooking) {
             </button>
 
             <button
+             onClick={() => setScheduleOpen(true)}
+             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 text-blue-300 transition-colors"
+            >
+            <CalendarSearch className="w-4 h-4" />
+             Schedule
+            </button>
+
+            <button
               onClick={handleLogout}
               className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
             >
@@ -423,6 +507,16 @@ async function submitReschedule(booking: GroupedBooking) {
             </button>
           </div>
         </div>
+
+        <div className="mb-4">
+  <input
+    type="text"
+    placeholder="Search by name, email, phone, date..."
+    value={search}
+    onChange={(e) => setSearch(e.target.value)}
+    className="w-full sm:w-96 px-4 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-[#8A948E] outline-none focus:border-[#9ED9B0]"
+  />
+</div>
 
         <div className="flex gap-2 mb-6 flex-wrap">
           {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled', 'all'] as const).map((f) => (
@@ -471,11 +565,22 @@ async function submitReschedule(booking: GroupedBooking) {
                       "
                     >
                       <div className="self-start">
-                        <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Customer</p>
-                        <p className="font-medium leading-5">{b.name}</p>
-                        <p className="text-[#8A948E] text-xs">{b.email}</p>
-                        <p className="text-[#8A948E] text-xs">{b.phone}</p>
-                      </div>
+
+  {filter === 'confirmed' && b.booking_date === today && (
+    <div className="mb-2 inline-flex items-center rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+      📅 TODAY
+    </div>
+  )}
+
+  <p className="text-[#8A948E] text-xs leading-5 mb-0.5">
+    Customer
+  </p>
+
+  <p className="font-medium leading-5">{b.name}</p>
+  <p className="text-[#8A948E] text-xs">{b.email}</p>
+  <p className="text-[#8A948E] text-xs">{b.phone}</p>
+
+</div>
 
                       <div className="self-start">
                         <p className="text-[#8A948E] text-xs leading-5 mb-0.5">Date & Time</p>
@@ -770,6 +875,78 @@ async function submitReschedule(booking: GroupedBooking) {
           </div>
         </div>
       )}
+
+      {scheduleOpen && (
+  <div
+    className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+    onClick={(e) => {
+      if (e.target === e.currentTarget) setScheduleOpen(false)
+    }}
+  >
+    <div
+      className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-[#13291F] border border-blue-400/20 p-4 sm:p-6"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-xl font-bold">Day Schedule</h2>
+        <button
+          onClick={() => setScheduleOpen(false)}
+          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm"
+        >
+          Close
+        </button>
+      </div>
+
+      <input
+        type="date"
+        value={scheduleDate}
+        onChange={(e) => setScheduleDate(e.target.value)}
+        className="w-full px-3 py-2 mb-4 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-blue-400"
+      />
+
+      {scheduleLoading ? (
+        <p className="text-sm text-[#8A948E]">Loading...</p>
+      ) : (
+        <div className="space-y-2">
+          {SCHEDULE_SLOTS.map((slot) => {
+            const booking = scheduleData?.bookings.find((b) => b.start_time.slice(0, 5) === slot)
+            const block = scheduleData?.blocked.find((b) => b.start_time.slice(0, 5) === slot)
+
+            let bg = 'bg-[#9ED9B0]/10 border-[#9ED9B0]/30'
+            let label = 'Vacant'
+            let sub = ''
+
+            if (booking) {
+              bg =
+                booking.status === 'pending'
+                  ? 'bg-yellow-500/10 border-yellow-500/30'
+                  : 'bg-blue-400/10 border-blue-400/30'
+              label = booking.status === 'pending' ? 'Pending' : booking.status === 'confirmed' ? 'Confirmed' : 'Completed'
+              sub = booking.name
+            } else if (block) {
+              bg = 'bg-red-500/10 border-red-500/30'
+              label = 'Blocked'
+              sub = block.reason
+            }
+
+            return (
+              <div
+                key={slot}
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 ${bg}`}
+              >
+                <span className="text-sm font-medium">{formatSlotRange(slot, addOneHour(slot))}</span>
+                <div className="text-right">
+                  <p className="text-xs font-medium">{label}</p>
+                  {sub && <p className="text-xs text-[#8A948E]">{sub}</p>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
       {blockOpen && (
         <div
