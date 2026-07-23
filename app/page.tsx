@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { Bebas_Neue } from 'next/font/google'
-import { CalendarCheck, ShieldCheck, Clock, QrCode, ChevronDown, Wallet } from 'lucide-react'
+import { CalendarCheck, ShieldCheck, Clock, QrCode, ChevronDown, Wallet, Menu, X, Star, MapPin, Users, Ruler, Sparkles } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
 const bebas = Bebas_Neue({ weight: '400', subsets: ['latin'] })
@@ -57,10 +57,24 @@ function useInView() {
 }
 
 const FEATURES = [
-  { icon: ShieldCheck, title: 'No Account Needed', desc: 'Book with just your name, email, and number.' },
-  { icon: Clock, title: 'Open 6AM – 12AM', desc: 'Pick any hour, any day, back-to-back if you like.' },
-  { icon: QrCode, title: 'Scan-to-Pay', desc: 'Simple QR payment, confirmed by hand, no fees.' },
-  { icon: CalendarCheck, title: 'Instant Slot Check', desc: 'See real-time availability before you commit.' },
+  { icon: ShieldCheck, title: 'No Account Needed', desc: 'Book with just your name, email, and number.', accent: '#9ED9B0' },
+  { icon: Clock, title: 'Open 6AM – 12AM', desc: 'Pick any hour, any day, back-to-back if you like.', accent: '#7FC7E8' },
+  { icon: QrCode, title: 'Scan-to-Pay', desc: 'Simple QR payment, confirmed by hand, no fees.', accent: '#E8C77F' },
+  { icon: CalendarCheck, title: 'Instant Slot Check', desc: 'See real-time availability before you commit.', accent: '#C79EE8' },
+  { icon: Ruler, title: 'Standard Size Court', desc: 'Regulation dimensions for proper practice and play.', accent: '#F2A65A' },
+  { icon: Sparkles, title: 'Silica Sand Finish', desc: 'Smooth, non-slip surface built for grip and control.', accent: '#7FD1C1' },
+]
+
+const STATS = [
+  { icon: Clock, value: '6AM–12AM', label: 'Open Daily' },
+  { icon: MapPin, value: '1', label: 'Court, Always Ready' },
+  { icon: Users, value: '0', label: 'Accounts Needed' },
+]
+
+const GALLERY = [
+  { src: '/court-1.jpg', caption: 'Full court view' },
+  { src: '/court-2.jpg', caption: 'Net close-up' },
+  { src: '/court-3.jpg', caption: 'Entrance' },
 ]
 
 const PARTICLES = [
@@ -101,7 +115,7 @@ function TodayAvailability() {
         </div>
         <div>
           <p className={`${bebas.className} text-2xl text-[#9ED9B0] leading-none`}>₱150 - ₱200 / HOUR </p>
-          <p className="text-xs text-[#8A948E] mt-1">₱150 (6 AM - 4 PM) • ₱200 (5 PM - 12 AM)</p>
+          <p className="text-xs text-[#8A948E] mt-1">Flat rate, any time slot</p>
         </div>
       </div>
 
@@ -215,6 +229,7 @@ function LocationCard() {
 export default function Home() {
   const stats = useInView()
   const features = useInView()
+  const [mobileMenu, setMobileMenu] = useState(false)
 
   return (
     <main className="relative min-h-[100dvh] text-[#F1F2ED] overflow-x-hidden">
@@ -243,19 +258,69 @@ export default function Home() {
         ))}
       </div>
 
-      <nav className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#0F211A]/40 backdrop-blur-md">
-        <span className={`${bebas.className} text-xl sm:text-2xl tracking-wide text-[#9ED9B0]`}>
-          TDA COURT
-        </span>
-        <Link
-          href="/booking"
-          className="bg-[#9ED9B0] text-[#13291F] text-sm font-semibold px-4 sm:px-5 py-2 rounded-full hover:scale-105 active:scale-95 transition-transform"
-        >
-          Reserve
-        </Link>
+      <nav className="fixed top-0 inset-x-0 z-50 bg-[#0F211A]/70 backdrop-blur-xl border-b border-[#9ED9B0]/10">
+        <div className="max-w-7xl mx-auto h-24 px-6 flex items-center justify-between">
+
+          <Link href="/" className="flex items-center gap-4 group">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-[#9ED9B0]/40 blur-3xl scale-150 animate-pulse" />
+              <img
+                src="/logo.png"
+                alt="TDA Court"
+                className="
+                  relative
+                  h-20
+                  w-auto
+                  object-contain
+                  drop-shadow-[0_0_25px_rgba(158,217,176,0.9)]
+                  transition-all
+                  duration-500
+                  group-hover:scale-110
+                  group-hover:rotate-2
+                "
+              />
+            </div>
+
+            <div className="hidden md:block">
+              <h1 className={`${bebas.className} text-4xl tracking-wider text-[#9ED9B0] leading-none`}>
+                TDA COURT
+              </h1>
+            </div>
+          </Link>
+
+          <div className="hidden lg:flex items-center gap-10 font-medium text-[#D9E7DD]">
+            <a href="#why" className="hover:text-[#9ED9B0] transition duration-300">Why Us</a>
+            <a href="#features" className="hover:text-[#9ED9B0] transition duration-300">Features</a>
+            <a href="#gallery" className="hover:text-[#9ED9B0] transition duration-300">Gallery</a>
+            <a href="#location" className="hover:text-[#9ED9B0] transition duration-300">Location</a>
+          </div>
+
+          <Link
+            href="/booking"
+            className="hidden lg:flex items-center px-7 py-3 rounded-full bg-[#9ED9B0] text-[#13291F] font-semibold shadow-[0_0_20px_rgba(158,217,176,0.5)] hover:scale-105 transition-all"
+          >
+            Reserve
+          </Link>
+
+          <button
+            onClick={() => setMobileMenu(!mobileMenu)}
+            className="lg:hidden text-[#9ED9B0]"
+          >
+            {mobileMenu ? <X size={30} /> : <Menu size={30} />}
+          </button>
+        </div>
       </nav>
 
-      <section className="relative flex flex-col lg:flex-row lg:items-center lg:min-h-[100dvh] px-4 sm:px-6 lg:px-16 pt-24 pb-16 lg:py-20">
+      {mobileMenu && (
+        <div className="lg:hidden fixed top-24 left-4 right-4 z-40 rounded-2xl bg-[#0F211A]/95 backdrop-blur-xl border border-[#9ED9B0]/10 shadow-2xl overflow-hidden">
+          <a href="#why" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Why Us</a>
+          <a href="#features" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Features</a>
+          <a href="#gallery" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Gallery</a>
+          <a href="#location" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Location</a>
+        </div>
+      )}
+
+      <section className="relative flex flex-col lg:flex-row lg:items-center lg:min-h-[100dvh] px-4 sm:px-6 lg:px-16 pt-36 pb-16 lg:pt-40 lg:pb-20">
         <div className="absolute inset-0 opacity-[0.1] animate-drift [background-image:linear-gradient(#ffffff_1px,transparent_1px),linear-gradient(90deg,#ffffff_1px,transparent_1px)] [background-size:64px_64px]" />
 
         <div className="relative z-10 w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center">
@@ -264,9 +329,7 @@ export default function Home() {
               Welcome to TDA · No accounts. Just play.
             </p>
 
-            <h1
-              className={`${bebas.className} text-4xl xs:text-5xl sm:text-7xl lg:text-6xl xl:text-7xl leading-[0.95] sm:leading-[0.9] tracking-wide mb-4`}
-            >
+            <h1 className={`${bebas.className} text-4xl xs:text-5xl sm:text-7xl lg:text-6xl xl:text-7xl leading-[0.95] sm:leading-[0.9] tracking-wide mb-4`}>
               <span className="inline-block animate-fade-up" style={{ animationDelay: '0.1s' }}>TDA</span>{' '}
               <span className="inline-block text-[#9ED9B0] animate-fade-up" style={{ animationDelay: '0.25s' }}>
                 PICKLEBALL
@@ -287,9 +350,22 @@ export default function Home() {
               </svg>
             </div>
 
-            <p className="text-xs sm:text-sm text-[#6B8B78] animate-fade-up" style={{ animationDelay: '0.55s' }}>
+            <p className="text-xs sm:text-sm text-[#6B8B78] animate-fade-up mb-5" style={{ animationDelay: '0.55s' }}>
               Takes less than a minute to book
             </p>
+
+            {/* Trust row */}
+            <div
+              className="flex items-center gap-4 animate-fade-up"
+              style={{ animationDelay: '0.65s' }}
+            >
+              <div className="flex items-center gap-1">
+                {[...Array(5)].map((_, i) => (
+                  <Star key={i} className="w-3.5 h-3.5 fill-[#9ED9B0] text-[#9ED9B0]" />
+                ))}
+              </div>
+              <span className="text-xs text-[#8A948E]">Trusted by local players every week</span>
+            </div>
           </div>
 
           <div className="flex justify-center lg:justify-end animate-fade-up" style={{ animationDelay: '0.3s' }}>
@@ -302,67 +378,85 @@ export default function Home() {
         </div>
       </section>
 
-      <section ref={features.ref} className="relative py-14 sm:py-20 px-4 sm:px-6">
-        <div className="max-w-5xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <section id="features" ref={features.ref} className="relative py-14 sm:py-20 px-4 sm:px-6">
+        <div className="max-w-5xl mx-auto grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {FEATURES.map((f, i) => {
             const Icon = f.icon
             return (
               <div
                 key={f.title}
-                className={`bg-[#0F211A]/40 backdrop-blur-md border border-[#9ED9B0]/20 rounded-2xl p-5 sm:p-6 text-center transition-all hover:-translate-y-1 hover:border-[#9ED9B0]/50 ${
+                className={`relative bg-[#0F211A]/40 backdrop-blur-md border border-[#9ED9B0]/20 rounded-2xl p-5 sm:p-6 text-center transition-all hover:-translate-y-1 overflow-hidden ${
                   features.inView ? 'animate-fade-up' : 'opacity-0'
                 }`}
-                style={{ animationDelay: `${i * 0.12}s` }}
+                style={{ animationDelay: `${i * 0.12}s`, borderTopColor: f.accent, borderTopWidth: '3px' }}
               >
-                <Icon className="w-7 h-7 sm:w-8 sm:h-8 text-[#9ED9B0] mx-auto mb-3" />
-                <h3 className="text-sm sm:text-base font-semibold mb-1">{f.title}</h3>
-                <p className="text-xs sm:text-sm text-[#B9C3BC]">{f.desc}</p>
+                <div
+                  className="absolute -top-6 -right-6 w-16 h-16 rounded-full blur-2xl opacity-30"
+                  style={{ backgroundColor: f.accent }}
+                />
+                <Icon className="w-7 h-7 sm:w-8 sm:h-8 mx-auto mb-3 relative" style={{ color: f.accent }} />
+                <h3 className="text-sm sm:text-base font-semibold mb-1 relative">{f.title}</h3>
+                <p className="text-xs sm:text-sm text-[#B9C3BC] relative">{f.desc}</p>
               </div>
             )
           })}
         </div>
       </section>
 
-      <section ref={stats.ref} className="relative py-12 sm:py-24 px-4 sm:px-6">
+      <section id="why" ref={stats.ref} className="relative py-12 sm:py-24 px-4 sm:px-6">
+        <div className="max-w-3xl mx-auto text-center mb-10 sm:mb-14">
+          <h2 className={`${bebas.className} text-2xl sm:text-4xl text-[#9ED9B0] mb-3 sm:mb-4`}>
+            Why Players Choose TDA
+          </h2>
+          <p className="text-sm sm:text-base text-[#B9C3BC] leading-relaxed">
+            Right in the heart of San Fernando, easy to find and even easier to book — no app,
+            no account, just pick a time and show up. Spacious parking so you're never scrambling
+            for a spot, and a homey, laid-back vibe that makes every game feel like playing at
+            a friend's backyard court.
+          </p>
+        </div>
         <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-10 text-center">
-          {[
-            { value: '6AM–12AM', label: 'Open Daily' },
-            { value: '1', label: 'Court, Always Ready' },
-            { value: '0', label: 'Accounts Needed' },
-          ].map((stat, i) => (
-            <div
-              key={stat.label}
-              className={stats.inView ? 'animate-fade-up' : 'opacity-0'}
-              style={{ animationDelay: `${i * 0.15}s` }}
-            >
-              <p className={`${bebas.className} text-3xl sm:text-5xl text-[#9ED9B0]`}>{stat.value}</p>
-              <p className="mt-2 text-xs sm:text-sm text-[#F1F2ED] uppercase tracking-wide">{stat.label}</p>
-            </div>
-          ))}
+          {STATS.map((stat, i) => {
+            const Icon = stat.icon
+            return (
+              <div
+                key={stat.label}
+                className={stats.inView ? 'animate-fade-up' : 'opacity-0'}
+                style={{ animationDelay: `${i * 0.15}s` }}
+              >
+                <Icon className="w-5 h-5 text-[#9ED9B0]/70 mx-auto mb-2" />
+                <p className={`${bebas.className} text-3xl sm:text-5xl text-[#9ED9B0]`}>{stat.value}</p>
+                <p className="mt-2 text-xs sm:text-sm text-[#F1F2ED] uppercase tracking-wide">{stat.label}</p>
+              </div>
+            )
+          })}
         </div>
       </section>
 
-      <section className="relative py-12 sm:py-24 px-4 sm:px-6">
+      <section id="gallery" className="relative py-12 sm:py-24 px-4 sm:px-6">
         <div className="max-w-5xl mx-auto">
           <h2 className={`${bebas.className} text-2xl sm:text-4xl text-center text-[#9ED9B0] mb-6 sm:mb-10`}>
             The Court
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
-            {['/court-1.jpg', '/court-2.jpg', '/court-3.jpg'].map((src, i) => (
+            {GALLERY.map((item, i) => (
               <div
-                key={src}
+                key={item.src}
                 className="group relative bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md p-2 sm:p-3 rounded-xl border border-[#9ED9B0]/25 animate-fade-up shadow-[0_0_30px_-8px_rgba(158,217,176,0.3),0_15px_40px_-15px_rgba(0,0,0,0.6)] transition-all duration-300 hover:shadow-[0_0_45px_-6px_rgba(158,217,176,0.5),0_20px_50px_-15px_rgba(0,0,0,0.6)] hover:-translate-y-1"
                 style={{ animationDelay: `${i * 0.15}s` }}
               >
                 <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-[#9ED9B0]/60 to-transparent" />
                 <div className="relative aspect-[4/3] sm:aspect-[4/5] overflow-hidden rounded-lg">
                   <img
-                    src={src}
-                    alt={`TDA Pickleball Court photo ${i + 1}`}
+                    src={item.src}
+                    alt={item.caption}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     loading="lazy"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-3 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300">
+                    <p className="text-sm font-medium text-white">{item.caption}</p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -370,7 +464,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="relative py-12 sm:py-24 px-4 sm:px-6">
+      <section id="location" className="relative py-12 sm:py-24 px-4 sm:px-6">
         <div className="max-w-5xl mx-auto">
           <h2 className={`${bebas.className} text-2xl sm:text-4xl text-center text-[#9ED9B0] mb-6 sm:mb-10`}>
             Find The Court
