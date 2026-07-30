@@ -14,7 +14,13 @@ const PEAK_PRICE = 200
 const OFFPEAK_PRICE = 150
 const HOLD_MINUTES = 3
 
-function getSlotPrice(slot: string) {
+function isWeekend(dateStr: string) {
+  const day = new Date(dateStr + 'T00:00:00').getDay()
+  return day === 0 || day === 5 || day === 6
+}
+
+function getSlotPrice(slot: string, dateStr: string) {
+  if (isWeekend(dateStr)) return PEAK_PRICE
   const hour = Number(slot.split(':')[0])
   return hour < 16 ? OFFPEAK_PRICE : PEAK_PRICE
 }
@@ -36,6 +42,17 @@ function formatSlotRange(time: string) {
 function addOneHour(time: string) {
   const [h, m] = time.split(':').map(Number)
   return `${((h + 1) % 24).toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+}
+
+// Returns "YYYY-MM-DD" using the browser's LOCAL date, not UTC. Using
+// toISOString() directly (as the date input's `min` used to) reports the
+// previous day for part of the morning in UTC+8 timezones like the
+// Philippines, which caused subtle off-by-one-day bugs.
+function getLocalDateString(date: Date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function IconCircle({ Icon }: { Icon: typeof User }) {
@@ -71,8 +88,26 @@ export default function BookingForm() {
   const [error, setError] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [poppedSlot, setPoppedSlot] = useState<string | null>(null)
+  const [confirmedBooking, setConfirmedBooking] = useState<{
+    date: string
+    slots: string[]
+    total: number
+    phone: string
+    email: string
+  } | null>(null)
 
-  const totalAmount = selectedSlots.reduce((sum, slot) => sum + getSlotPrice(slot), 0)
+  const [holdExpiresAt, setHoldExpiresAt] = useState<number | null>(null)
+
+  const totalAmount = selectedSlots.reduce((sum, slot) => sum + getSlotPrice(slot, bookingDate), 0)
+
+  const today = getLocalDateString()
+  const isBookingToday = bookingDate === today
+
+  function isPastSlot(slot: string) {
+    if (!isBookingToday) return false
+    const slotHour = Number(slot.split(':')[0])
+    return slotHour < new Date().getHours()
+  }
 
   // Fetch actual bookings + active holds whenever the date changes
   useEffect(() => {
@@ -134,6 +169,7 @@ export default function BookingForm() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'bookings', filter: `booking_date=eq.${bookingDate}` },
         (payload) => {
+          if (payload.new.group_id && payload.new.group_id === lastGroupId.current) return
           const takenSlot = (payload.new.start_time as string).slice(0, 5)
           setTakenSlots((prev) => (prev.includes(takenSlot) ? prev : [...prev, takenSlot]))
           setSelectedSlots((prev) => {
@@ -180,6 +216,20 @@ export default function BookingForm() {
     return () => window.removeEventListener('beforeunload', releaseOnUnload)
   }, [sessionId])
 
+  // Silent auto-reset: checks once a second whether the 3-minute hold window has expired
+  useEffect(() => {
+    if (!holdExpiresAt) return
+
+    const interval = setInterval(() => {
+      if (Date.now() >= holdExpiresAt) {
+        clearInterval(interval)
+        resetBookingFlow()
+      }
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [holdExpiresAt])
+
   async function releaseHold(slot: string) {
     await supabase
       .from('slot_holds')
@@ -191,6 +241,18 @@ export default function BookingForm() {
 
   async function releaseAllMyHolds() {
     await supabase.from('slot_holds').delete().eq('session_id', sessionId)
+  }
+
+  async function resetBookingFlow() {
+    await releaseAllMyHolds()
+    setSelectedSlots([])
+    setBookingDate('')
+    setHoldExpiresAt(null)
+    setProofFile(null)
+    setProofPreview(null)
+    setError('')
+    setHoldError('Your held slots expired after 3 minutes. Please choose your time again.')
+    setStep(1)
   }
 
   async function tryHoldSlot(slot: string): Promise<boolean> {
@@ -237,9 +299,21 @@ export default function BookingForm() {
   async function toggleSlot(slot: string) {
     setHoldError(null)
 
+    // A slot whose hour has already gone by today can never be booked —
+    // explain why instead of silently doing nothing, so customers don't
+    // wonder why it won't select.
+    if (isPastSlot(slot)) {
+      setHoldError(`${formatSlotRange(slot)} has already passed today. Please choose an upcoming time.`)
+      return
+    }
+
     if (selectedSlots.includes(slot)) {
-      setSelectedSlots((prev) => prev.filter((s) => s !== slot))
+      const updated = selectedSlots.filter((s) => s !== slot)
+      setSelectedSlots(updated)
       releaseHold(slot)
+      if (updated.length === 0) {
+        setHoldExpiresAt(null)
+      }
       return
     }
 
@@ -253,7 +327,12 @@ export default function BookingForm() {
       return
     }
 
+    const wasEmpty = selectedSlots.length === 0
     setSelectedSlots((prev) => [...prev, slot].sort())
+
+    if (wasEmpty) {
+      setHoldExpiresAt(Date.now() + HOLD_MINUTES * 60 * 1000)
+    }
   }
 
   function handleProofChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -262,6 +341,8 @@ export default function BookingForm() {
     setProofFile(file)
     setProofPreview(URL.createObjectURL(file))
   }
+
+  const lastGroupId = useRef<string | null>(null)
 
   async function handleConfirmBooking() {
     if (!proofFile) {
@@ -303,6 +384,15 @@ export default function BookingForm() {
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName)
 
     const groupId = crypto.randomUUID()
+    lastGroupId.current = groupId
+
+    setConfirmedBooking({
+      date: bookingDate,
+      slots: [...selectedSlots],
+      total: totalAmount,
+      phone,
+      email,
+    })
 
     const rows = selectedSlots.map((slot) => ({
       group_id: groupId,
@@ -314,7 +404,7 @@ export default function BookingForm() {
       end_time: addOneHour(slot),
       status: 'pending',
       proof_url: urlData.publicUrl,
-      amount: getSlotPrice(slot),
+      amount: getSlotPrice(slot, bookingDate),
     }))
 
     const { error: insertError } = await supabase.from('bookings').insert(rows)
@@ -322,10 +412,12 @@ export default function BookingForm() {
     if (insertError) {
       setError('Something went wrong saving your booking. Please try again.')
       setSubmitting(false)
+      setConfirmedBooking(null)
       return
     }
 
     await releaseAllMyHolds()
+    setHoldExpiresAt(null)
 
     const emailPayload = {
       email, name, bookingDate,
@@ -352,7 +444,7 @@ export default function BookingForm() {
 
   const primaryBtnGlow = 'shadow-[0_4px_20px_-4px_rgba(158,217,176,0.6)]'
 
-  if (confirmed) {
+  if (confirmed && confirmedBooking) {
     return (
       <div className="max-w-md mx-auto p-8 bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-2xl border border-[#9ED9B0]/25 text-center animate-fade-up shadow-[0_0_40px_-8px_rgba(158,217,176,0.35),0_20px_50px_-15px_rgba(0,0,0,0.6)]">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#9ED9B0]/10 flex items-center justify-center">
@@ -360,11 +452,11 @@ export default function BookingForm() {
         </div>
         <h2 className="text-xl font-bold text-[#F1F2ED] mb-2">Booking Received</h2>
         <p className="text-[#B9C3BC] text-sm">
-          We've received your booking for <strong className="text-[#F1F2ED]">{bookingDate}</strong> at{' '}
-          <strong className="text-[#F1F2ED]">{selectedSlots.map(formatSlotRange).join(', ')}</strong> — total{' '}
-          <strong className="text-[#F1F2ED]">₱{totalAmount}</strong>. We'll verify your payment and confirm
-          shortly — you'll be contacted at <strong className="text-[#F1F2ED]">{phone}</strong> or{' '}
-          <strong className="text-[#F1F2ED]">{email}</strong>.
+          We've received your booking for <strong className="text-[#F1F2ED]">{confirmedBooking.date}</strong> at{' '}
+          <strong className="text-[#F1F2ED]">{confirmedBooking.slots.map(formatSlotRange).join(', ')}</strong> — total{' '}
+          <strong className="text-[#F1F2ED]">₱{confirmedBooking.total}</strong>. We'll verify your payment and confirm
+          shortly — you'll be contacted at <strong className="text-[#F1F2ED]">{confirmedBooking.phone}</strong> or{' '}
+          <strong className="text-[#F1F2ED]">{confirmedBooking.email}</strong>.
         </p>
       </div>
     )
@@ -436,7 +528,7 @@ export default function BookingForm() {
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#F1F2ED]">Choose Your Times</h2>
             <p className="text-xs text-[#8A948E] -mt-3">
-              You can select more than one hour. ₱{OFFPEAK_PRICE}/hr (6AM–4PM) · ₱{PEAK_PRICE}/hr (4PM–12AM)
+              You can select more than one hour. Weekdays: ₱{OFFPEAK_PRICE}/hr (6AM–4PM) · ₱{PEAK_PRICE}/hr (4PM–12AM). Fri–Sun: flat ₱{PEAK_PRICE}/hr.
             </p>
             <p className="text-xs text-[#8A948E] -mt-2 flex items-center gap-1">
               <Lock className="w-3 h-3" /> Selected slots are held for {HOLD_MINUTES} minutes.
@@ -462,7 +554,7 @@ export default function BookingForm() {
                 <div className="absolute left-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-[#9ED9B0]/10 flex items-center justify-center pointer-events-none">
                   <Calendar className="w-3.5 h-3.5 text-[#9ED9B0]" />
                 </div>
-                <input type="date" required min={new Date().toISOString().split('T')[0]} value={bookingDate} onChange={(e) => setBookingDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
+                <input type="date" required min={today} value={bookingDate} onChange={(e) => setBookingDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
               </div>
             </div>
 
@@ -485,6 +577,11 @@ export default function BookingForm() {
                       const isHeld = heldByOthers.includes(slot)
                       const isBlocked = blockedSlots.includes(slot)
 
+                      // Note: past-hour slots are intentionally NOT disabled or
+                      // styled differently here — they look identical to normal
+                      // available slots so booked/held/blocked ones stay clearly
+                      // distinguishable. toggleSlot() still blocks the click and
+                      // explains why via the warning banner above.
                       const isDisabled = isTaken || isHeld || isBlocked
 
                       const isSelected = selectedSlots.includes(slot)
@@ -527,7 +624,7 @@ export default function BookingForm() {
                               ? (blockedInfo[slot] ?? 'Blocked')
                               : isHeld
                               ? 'Held'
-                              : `₱${getSlotPrice(slot)}`}
+                              : `₱${getSlotPrice(slot, bookingDate)}`}
                           </span>
                         </button>
                       )

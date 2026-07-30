@@ -14,8 +14,15 @@ export default function BookingPage() {
 
       {/* Nav bar */}
       <nav className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#0F211A]/40 backdrop-blur-md">
-        <Link href="/" className={`${bebas.className} text-xl sm:text-2xl tracking-wide text-[#9ED9B0]`}>
-          TDA COURT
+        <Link href="/" className="flex items-center gap-2 sm:gap-3">
+          <img
+            src="/logo.png"
+            alt="TDA Court"
+            className="h-8 sm:h-10 w-auto object-contain drop-shadow-[0_0_15px_rgba(158,217,176,0.6)]"
+          />
+          <span className={`${bebas.className} text-xl sm:text-2xl tracking-wide text-[#9ED9B0]`}>
+            TDA COURT
+          </span>
         </Link>
         <Link
           href="/"

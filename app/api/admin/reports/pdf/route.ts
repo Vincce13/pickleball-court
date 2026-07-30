@@ -9,22 +9,29 @@ function formatHourShort(time: string) {
   return m === 0 ? `${hour12}${period}` : `${hour12}:${m.toString().padStart(2, '0')}${period}`
 }
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
-    const period = searchParams.get('period') ?? 'this-month'
 
-    const today = new Date()
-    let startDate: Date
-    let endDate: Date
+    const now = new Date()
 
-    if (period === 'last-month') {
-      startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-      endDate = new Date(today.getFullYear(), today.getMonth(), 0)
-    } else {
-      startDate = new Date(today.getFullYear(), today.getMonth(), 1)
-      endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-    }
+    // Same fix as the JSON report route: read month/year (what the frontend
+    // actually sends) instead of the old unused "period" param.
+    const monthParam = searchParams.get('month')
+    const yearParam = searchParams.get('year')
+
+    const month = monthParam ? Number(monthParam) : now.getMonth() + 1 // 1-12
+    const year = yearParam ? Number(yearParam) : now.getFullYear()
+
+    const startDate = new Date(year, month - 1, 1)
+    const endDate = new Date(year, month, 0)
+
+    const periodLabel = `${MONTH_NAMES[month - 1]} ${year}`
 
     const { data, error } = await supabaseAdmin
       .from('bookings')
@@ -73,7 +80,7 @@ export async function GET(req: NextRequest) {
     y -= 30
     page.drawText('Monthly Revenue Report', { x: 50, y, size: 16, font: bold })
     y -= 35
-    page.drawText(`Period: ${period}`, { x: 50, y, size: 12, font })
+    page.drawText(`Period: ${periodLabel}`, { x: 50, y, size: 12, font })
     y -= 20
     page.drawText(`Completed Transactions: ${grouped.length}`, { x: 50, y, size: 12, font })
     y -= 18
@@ -160,7 +167,7 @@ export async function GET(req: NextRequest) {
     return new Response(new Uint8Array(pdfBytes), {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': 'inline; filename="monthly-report.pdf"',
+        'Content-Disposition': `attachment; filename="monthly-report-${MONTH_NAMES[month - 1]}-${year}.pdf"`,
       },
     })
   } catch (err) {

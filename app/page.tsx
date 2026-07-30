@@ -25,6 +25,18 @@ function formatHour(time: string) {
   return `${hour12}${period}`
 }
 
+// Returns "YYYY-MM-DD" using the browser's LOCAL date, not UTC.
+// new Date().toISOString() always converts to UTC first, which for a
+// Philippines-based site (UTC+8) reports the previous day for roughly the
+// first 8 hours of each local day — this caused "today" to sometimes query
+// the wrong booking_date entirely.
+function getLocalDateString(date: Date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -68,7 +80,6 @@ const FEATURES = [
 const STATS = [
   { icon: Clock, value: '6AM–12AM', label: 'Open Daily' },
   { icon: MapPin, value: '1', label: 'Court, Always Ready' },
-  { icon: Users, value: '0', label: 'Accounts Needed' },
 ]
 
 const GALLERY = [
@@ -86,26 +97,89 @@ const PARTICLES = [
   { left: '88%', size: 6, delay: 7, duration: 19 },
 ]
 
+function formatSlotRange(time: string) {
+  const start = parseInt(time.split(':')[0])
+
+  const end = start === 23 ? 24 : start + 1
+
+  const format = (hour: number) => {
+    if (hour === 24) return '12 AM'
+
+    const period = hour >= 12 ? 'PM' : 'AM'
+    const h = hour % 12 === 0 ? 12 : hour % 12
+
+    return `${h} ${period}`
+  }
+
+  return `${format(start)} - ${format(end)}`
+}
+
+type SlotStatus = 'available' | 'booked' | 'past'
+
 function TodayAvailability() {
-  const today = new Date().toISOString().split('T')[0]
-  const [takenCount, setTakenCount] = useState(0)
+  const [today, setToday] = useState(() => getLocalDateString())
   const [loading, setLoading] = useState(true)
+  const [slotStatuses, setSlotStatuses] = useState<{ slot: string; status: SlotStatus }[]>([])
+  const [showSchedule, setShowSchedule] = useState(false)
+
+  // Keep "today" correct even if the tab is left open across local midnight —
+  // otherwise a visitor browsing at 11:59 PM would keep seeing yesterday's
+  // slot list until they refresh.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const current = getLocalDateString()
+      setToday((prev) => (prev === current ? prev : current))
+    }, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
+    let cancelled = false
+
+    setLoading(true)
+
     supabase
       .from('bookings')
       .select('start_time')
       .eq('booking_date', today)
       .neq('status', 'cancelled')
       .then(({ data, error }) => {
+        if (cancelled) return
+
         if (!error && data) {
-          setTakenCount(data.length)
+          // start_time comes back from Postgres as "HH:MM:SS" (e.g. "06:00:00"),
+          // but TIME_SLOTS uses "HH:MM" (e.g. "06:00") — normalize to the same
+          // format before comparing, otherwise nothing ever matches and every
+          // slot looks "available" even when it's booked.
+          const bookedSlots = data.map((b) => b.start_time.slice(0, 5))
+
+          const now = new Date()
+          const isViewingToday = getLocalDateString(now) === today
+          const currentHour = now.getHours()
+
+          // Always list every hour starting at 6 AM, in order — never trim
+          // the list down to "whatever's left" so it stays a consistent,
+          // predictable full-day view. Each slot is just tagged with its
+          // status instead of being removed.
+          const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
+            const slotHour = Number(slot.split(':')[0])
+            if (bookedSlots.includes(slot)) return { slot, status: 'booked' }
+            if (isViewingToday && slotHour < currentHour) return { slot, status: 'past' }
+            return { slot, status: 'available' }
+          })
+
+          setSlotStatuses(statuses)
         }
+
         setLoading(false)
       })
+
+    return () => {
+      cancelled = true
+    }
   }, [today])
 
-  const openCount = TIME_SLOTS.length - takenCount
+  const availableCount = slotStatuses.filter((s) => s.status === 'available').length
 
   return (
     <div className="w-full max-w-sm bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-2xl p-6 border border-[#9ED9B0]/25 shadow-[0_0_40px_-8px_rgba(158,217,176,0.35),0_20px_50px_-15px_rgba(0,0,0,0.6)]">
@@ -115,11 +189,11 @@ function TodayAvailability() {
         </div>
         <div>
           <p className={`${bebas.className} text-2xl text-[#9ED9B0] leading-none`}>₱150 - ₱200 / HOUR </p>
-          <p className="text-xs text-[#8A948E] mt-1">Flat rate, any time slot</p>
+          <p className="text-xs text-[#8A948E] mt-1">₱150 before 5PM · ₱200 after, Fri–Sun flat ₱200</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 mb-5">
+      <div className="flex items-center gap-3 mb-2">
         <div className="w-10 h-10 rounded-full bg-[#9ED9B0]/10 flex items-center justify-center shrink-0">
           <CalendarCheck className="w-5 h-5 text-[#9ED9B0]" />
         </div>
@@ -129,7 +203,7 @@ function TodayAvailability() {
           ) : (
             <>
               <p className={`${bebas.className} text-2xl text-[#F1F2ED] leading-none`}>
-                {openCount} slot{openCount === 1 ? '' : 's'} open
+                {availableCount} slot{availableCount === 1 ? '' : 's'} open
               </p>
               <p className="text-xs text-[#8A948E] mt-1">Available today</p>
             </>
@@ -137,12 +211,39 @@ function TodayAvailability() {
         </div>
       </div>
 
-      <Link
-        href="/booking"
-        className="block text-center w-full bg-[#9ED9B0] text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-[#8bcda0] active:scale-95 transition-all shadow-[0_4px_20px_-4px_rgba(158,217,176,0.6)]"
-      >
-        Reserve a Time
-      </Link>
+      {!loading && (
+        <div className="border-t border-white/10 pt-3">
+          <button
+            type="button"
+            onClick={() => setShowSchedule((v) => !v)}
+            className="w-full flex items-center justify-between text-xs uppercase tracking-wide text-[#8FB39B] hover:text-[#9ED9B0] transition-colors py-1"
+          >
+            <span>{showSchedule ? 'Hide' : 'View'} Today's Schedule</span>
+            <ChevronDown
+              className={`w-4 h-4 transition-transform duration-300 ${showSchedule ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {showSchedule && (
+            <div className="flex flex-wrap gap-2 mt-3 animate-fade-up">
+              {slotStatuses.map(({ slot, status }) => (
+                <span
+                  key={slot}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    status === 'available'
+                      ? 'bg-green-500/10 border-green-500/30 text-[#9ED9B0]'
+                      : status === 'booked'
+                      ? 'bg-red-500/10 border-red-500/30 text-red-300 line-through'
+                      : 'bg-white/5 border-white/10 text-[#5A645E]'
+                  }`}
+                >
+                  {formatSlotRange(slot)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -230,6 +331,18 @@ export default function Home() {
   const stats = useInView()
   const features = useInView()
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [totalBookings, setTotalBookings] = useState<number | null>(null)
+  const [selectedImage, setSelectedImage] = useState<{ src: string; caption: string } | null>(null)
+
+  useEffect(() => {
+    supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'cancelled')
+      .then(({ count }) => {
+        if (typeof count === 'number') setTotalBookings(count)
+      })
+  }, [])
 
   return (
     <main className="relative min-h-[100dvh] text-[#F1F2ED] overflow-x-hidden">
@@ -259,7 +372,7 @@ export default function Home() {
       </div>
 
       <nav className="fixed top-0 inset-x-0 z-50 bg-[#0F211A]/70 backdrop-blur-xl border-b border-[#9ED9B0]/10">
-        <div className="max-w-7xl mx-auto h-24 px-6 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto h-16 sm:h-20 lg:h-24 px-4 sm:px-6 flex items-center justify-between">
 
           <Link href="/" className="flex items-center gap-4 group">
             <div className="relative">
@@ -269,7 +382,9 @@ export default function Home() {
                 alt="TDA Court"
                 className="
                   relative
-                  h-20
+                  h-10
+                  sm:h-14
+                  lg:h-20
                   w-auto
                   object-contain
                   drop-shadow-[0_0_25px_rgba(158,217,176,0.9)]
@@ -281,8 +396,8 @@ export default function Home() {
               />
             </div>
 
-            <div className="hidden md:block">
-              <h1 className={`${bebas.className} text-4xl tracking-wider text-[#9ED9B0] leading-none`}>
+            <div className="block">
+              <h1 className={`${bebas.className} text-2xl sm:text-3xl lg:text-4xl tracking-wider text-[#9ED9B0] leading-none`}>
                 TDA COURT
               </h1>
             </div>
@@ -378,32 +493,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="features" ref={features.ref} className="relative py-14 sm:py-20 px-4 sm:px-6">
-        <div className="max-w-5xl mx-auto grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-          {FEATURES.map((f, i) => {
-            const Icon = f.icon
-            return (
-              <div
-                key={f.title}
-                className={`relative bg-[#0F211A]/40 backdrop-blur-md border border-[#9ED9B0]/20 rounded-2xl p-5 sm:p-6 text-center transition-all hover:-translate-y-1 overflow-hidden ${
-                  features.inView ? 'animate-fade-up' : 'opacity-0'
-                }`}
-                style={{ animationDelay: `${i * 0.12}s`, borderTopColor: f.accent, borderTopWidth: '3px' }}
-              >
-                <div
-                  className="absolute -top-6 -right-6 w-16 h-16 rounded-full blur-2xl opacity-30"
-                  style={{ backgroundColor: f.accent }}
-                />
-                <Icon className="w-7 h-7 sm:w-8 sm:h-8 mx-auto mb-3 relative" style={{ color: f.accent }} />
-                <h3 className="text-sm sm:text-base font-semibold mb-1 relative">{f.title}</h3>
-                <p className="text-xs sm:text-sm text-[#B9C3BC] relative">{f.desc}</p>
-              </div>
-            )
-          })}
-        </div>
-      </section>
 
-      <section id="why" ref={stats.ref} className="relative py-12 sm:py-24 px-4 sm:px-6">
+        <section id="why" ref={stats.ref} className="relative py-12 sm:py-24 px-4 sm:px-6">
         <div className="max-w-3xl mx-auto text-center mb-10 sm:mb-14">
           <h2 className={`${bebas.className} text-2xl sm:text-4xl text-[#9ED9B0] mb-3 sm:mb-4`}>
             Why Players Choose TDA
@@ -430,8 +521,45 @@ export default function Home() {
               </div>
             )
           })}
+          <div
+            className={stats.inView ? 'animate-fade-up' : 'opacity-0'}
+            style={{ animationDelay: `${STATS.length * 0.15}s` }}
+          >
+            <Users className="w-5 h-5 text-[#9ED9B0]/70 mx-auto mb-2" />
+            <p className={`${bebas.className} text-3xl sm:text-5xl text-[#9ED9B0]`}>
+              {totalBookings === null ? '—' : totalBookings}
+            </p>
+            <p className="mt-2 text-xs sm:text-sm text-[#F1F2ED] uppercase tracking-wide">Bookings Made</p>
+          </div>
+        </div>
+      </section>  
+
+      <section id="features" ref={features.ref} className="relative py-14 sm:py-20 px-4 sm:px-6">
+        <div className="max-w-5xl mx-auto grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+          {FEATURES.map((f, i) => {
+            const Icon = f.icon
+            return (
+              <div
+                key={f.title}
+                className={`relative bg-[#0F211A]/40 backdrop-blur-md border border-[#9ED9B0]/20 rounded-2xl p-5 sm:p-6 text-center transition-all hover:-translate-y-1 overflow-hidden ${
+                  features.inView ? 'animate-fade-up' : 'opacity-0'
+                }`}
+                style={{ animationDelay: `${i * 0.12}s`, borderTopColor: f.accent, borderTopWidth: '3px' }}
+              >
+                <div
+                  className="absolute -top-6 -right-6 w-16 h-16 rounded-full blur-2xl opacity-30"
+                  style={{ backgroundColor: f.accent }}
+                />
+                <Icon className="w-7 h-7 sm:w-8 sm:h-8 mx-auto mb-3 relative" style={{ color: f.accent }} />
+                <h3 className="text-sm sm:text-base font-semibold mb-1 relative">{f.title}</h3>
+                <p className="text-xs sm:text-sm text-[#B9C3BC] relative">{f.desc}</p>
+              </div>
+            )
+          })}
         </div>
       </section>
+
+
 
       <section id="gallery" className="relative py-12 sm:py-24 px-4 sm:px-6">
         <div className="max-w-5xl mx-auto">
@@ -442,7 +570,8 @@ export default function Home() {
             {GALLERY.map((item, i) => (
               <div
                 key={item.src}
-                className="group relative bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md p-2 sm:p-3 rounded-xl border border-[#9ED9B0]/25 animate-fade-up shadow-[0_0_30px_-8px_rgba(158,217,176,0.3),0_15px_40px_-15px_rgba(0,0,0,0.6)] transition-all duration-300 hover:shadow-[0_0_45px_-6px_rgba(158,217,176,0.5),0_20px_50px_-15px_rgba(0,0,0,0.6)] hover:-translate-y-1"
+                onClick={() => setSelectedImage(item)}
+                className="group relative bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md p-2 sm:p-3 rounded-xl border border-[#9ED9B0]/25 animate-fade-up shadow-[0_0_30px_-8px_rgba(158,217,176,0.3),0_15px_40px_-15px_rgba(0,0,0,0.6)] transition-all duration-300 hover:shadow-[0_0_45px_-6px_rgba(158,217,176,0.5),0_20px_50px_-15px_rgba(0,0,0,0.6)] hover:-translate-y-1 cursor-pointer"
                 style={{ animationDelay: `${i * 0.15}s` }}
               >
                 <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-[#9ED9B0]/60 to-transparent" />
@@ -463,6 +592,29 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center px-4 py-8 animate-fade-up"
+          onClick={() => setSelectedImage(null)}
+        >
+          <button
+            onClick={() => setSelectedImage(null)}
+            className="absolute top-4 right-4 sm:top-6 sm:right-6 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#F1F2ED] transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="max-w-4xl max-h-[85vh] w-full" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={selectedImage.src}
+              alt={selectedImage.caption}
+              className="w-full h-full max-h-[75vh] object-contain rounded-lg"
+            />
+            <p className="text-center text-[#D7DAD4] mt-4 text-sm sm:text-base">{selectedImage.caption}</p>
+          </div>
+        </div>
+      )}
 
       <section id="location" className="relative py-12 sm:py-24 px-4 sm:px-6">
         <div className="max-w-5xl mx-auto">
@@ -487,6 +639,28 @@ export default function Home() {
           Reserve a Time
         </Link>
       </section>
+
+      {/* Mobile Floating Reserve Button */}
+<div className="fixed bottom-5 left-0 right-0 z-50 flex justify-center lg:hidden">
+  <Link
+    href="/booking"
+    className="
+      bg-[#9ED9B0]
+      text-[#13291F]
+      font-bold
+      px-8
+      py-3.5
+      rounded-full
+      shadow-[0_0_25px_rgba(158,217,176,0.55)]
+      border border-white/20
+      active:scale-95
+      transition-all
+      animate-pulse
+    "
+  >
+    Reserve Now
+  </Link>
+</div>
 
       <footer className="relative text-center py-5 sm:py-8 text-xs sm:text-sm text-[#F1F2ED] px-4">
         © 2026 TDA Pickleball Court

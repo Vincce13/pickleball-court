@@ -46,19 +46,27 @@ function formatDate(date: string) {
   })
 }
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
 export default function MonthlyReport() {
-  const [period, setPeriod] = useState<'this-month' | 'last-month'>('this-month')
+  const now = new Date()
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year, setYear] = useState(now.getFullYear())
   const [report, setReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(false)
   const [hasError, setHasError] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
-  async function loadReport(value: string) {
+  async function loadReport(m: number, y: number) {
     setLoading(true)
     setReport(null)
     setHasError(false)
 
     try {
-      const res = await fetch(`/api/admin/reports?period=${value}`)
+      const res = await fetch(`/api/admin/reports?month=${m}&year=${y}`)
       const data = await res.json()
 
       if (!res.ok || !data.summary || !Array.isArray(data.transactions)) {
@@ -75,8 +83,38 @@ export default function MonthlyReport() {
   }
 
   useEffect(() => {
-    loadReport(period)
-  }, [period])
+    loadReport(month, year)
+  }, [month, year])
+
+  // Mobile browsers (especially in-app webviews) frequently block or produce a
+  // blank tab for window.open('_blank'), and many lack an inline PDF viewer.
+  // Fetching the file ourselves and triggering a real <a download> click works
+  // reliably across desktop and mobile since the PDF route now sends
+  // Content-Disposition: attachment.
+  async function handleExportPdf() {
+    setExporting(true)
+    try {
+      const res = await fetch(`/api/admin/reports/pdf?month=${month}&year=${year}`)
+      if (!res.ok) throw new Error('Failed to generate PDF')
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `monthly-report-${MONTH_NAMES[month - 1]}-${year}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+
+      // Give the browser a moment to pick up the blob before revoking it
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      alert('Something went wrong generating the PDF. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="mb-8 rounded-xl border border-[#9ED9B0]/20 bg-[#16332570] p-5">
@@ -90,23 +128,31 @@ export default function MonthlyReport() {
         <div className="flex gap-2">
 
           <select
-            value={period}
-            onChange={(e) =>
-              setPeriod(e.target.value as 'this-month' | 'last-month')
-            }
-            className="rounded-lg bg-[#13291F] border border-[#9ED9B0]/20 px-3 py-2"
+            value={month}
+            onChange={(e) => setMonth(Number(e.target.value))}
+            className="rounded-lg bg-[#13291F] border border-[#9ED9B0]/20 px-3 py-2 text-sm"
           >
-            <option value="this-month">This Month</option>
-            <option value="last-month">Last Month</option>
+            {MONTH_NAMES.map((label, i) => (
+              <option key={label} value={i + 1}>{label}</option>
+            ))}
+          </select>
+
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="rounded-lg bg-[#13291F] border border-[#9ED9B0]/20 px-3 py-2 text-sm"
+          >
+            {Array.from({ length: now.getFullYear() - 2025 }, (_, i) => 2026 + i).map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
           </select>
 
           <button
-            onClick={() =>
-              window.open(`/api/admin/reports/pdf?period=${period}`, '_blank')
-            }
-            className="rounded-lg bg-[#9ED9B0] text-[#13291F] px-4 py-2 font-medium"
+            onClick={handleExportPdf}
+            disabled={exporting}
+            className="rounded-lg bg-[#9ED9B0] text-[#13291F] px-4 py-2 font-medium disabled:opacity-50"
           >
-            Export PDF
+            {exporting ? 'Preparing...' : 'Export PDF'}
           </button>
 
         </div>

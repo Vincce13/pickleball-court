@@ -259,7 +259,11 @@ export default function AdminDashboard() {
             ? `Booking cancelled for ${booking.name}${emailNote}`
             : status === 'completed'
             ? `Booking marked complete for ${booking.name}.`
-            : 'Booking marked as pending.',
+            : status === 'refunded'
+            ? `Booking for ${booking.name} moved to Refunded.`
+            : status === 'pending'
+            ? `Booking for ${booking.name} marked as pending.`
+            : `Booking for ${booking.name} updated to ${status}.`,
         type: 'success',
       })
 
@@ -631,6 +635,18 @@ if (filter === 'confirmed') {
                         <div className="flex items-center gap-2 px-3 text-sm text-[#9ED9B0]">
                           <Loader2 className="w-4 h-4 animate-spin" /> Updating...
                         </div>
+                      ) : filter === 'refunded' || b.status === 'refunded' ? (
+                        <>
+                          {b.proof_url && (
+                            <button
+                              onClick={() => setPreviewUrl(b.proof_url)}
+                              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                              title="View payment proof"
+                            >
+                              <ImageIcon className="w-4 h-4 text-[#9ED9B0]" />
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <>
                           {b.proof_url && (
