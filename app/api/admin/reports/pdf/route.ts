@@ -20,8 +20,6 @@ export async function GET(req: NextRequest) {
 
     const now = new Date()
 
-    // Same fix as the JSON report route: read month/year (what the frontend
-    // actually sends) instead of the old unused "period" param.
     const monthParam = searchParams.get('month')
     const yearParam = searchParams.get('year')
 
@@ -33,18 +31,33 @@ export async function GET(req: NextRequest) {
 
     const periodLabel = `${MONTH_NAMES[month - 1]} ${year}`
 
-    const { data, error } = await supabaseAdmin
-      .from('bookings')
-      .select('*')
-      .eq('status', 'completed')
-      .gte('booking_date', startDate.toISOString().split('T')[0])
-      .lte('booking_date', endDate.toISOString().split('T')[0])
-      .order('booking_date', { ascending: true })
+    const start = startDate.toISOString().split('T')[0]
+    const end = endDate.toISOString().split('T')[0]
 
-    if (error) throw error
+    // Same fix as the JSON route: past months live in archived_bookings once
+    // the monthly archive cron has run, so query both tables and merge.
+    const [liveResult, archivedResult] = await Promise.all([
+      supabaseAdmin
+        .from('bookings')
+        .select('*')
+        .eq('status', 'completed')
+        .gte('booking_date', start)
+        .lte('booking_date', end),
+      supabaseAdmin
+        .from('archived_bookings')
+        .select('*')
+        .eq('status', 'completed')
+        .gte('booking_date', start)
+        .lte('booking_date', end),
+    ])
+
+    if (liveResult.error) throw liveResult.error
+    if (archivedResult.error) throw archivedResult.error
+
+    const data = [...(liveResult.data ?? []), ...(archivedResult.data ?? [])]
 
     const grouped = Object.values(
-      (data ?? []).reduce((acc: any, booking: any) => {
+      data.reduce((acc: any, booking: any) => {
         if (!acc[booking.group_id]) {
           acc[booking.group_id] = {
             booking_date: booking.booking_date,
@@ -64,6 +77,9 @@ export async function GET(req: NextRequest) {
         return acc
       }, {})
     )
+
+    // Sort oldest-first for the PDF listing, same as the original
+    grouped.sort((a: any, b: any) => a.booking_date.localeCompare(b.booking_date))
 
     const grossRevenue = grouped.reduce((sum: number, b: any) => sum + b.total_amount, 0)
     const refunds = grouped.reduce((sum: number, b: any) => sum + b.refund_amount, 0)
@@ -91,12 +107,11 @@ export async function GET(req: NextRequest) {
     page.drawText(`Net Revenue: PHP${netRevenue}`, { x: 50, y, size: 12, font: bold, color: rgb(0, 0.5, 0) })
     y -= 40
 
-    // Column x-positions, widened + Net pushed right for breathing room
     const COL_DATE = 50
     const COL_CUSTOMER = 120
     const COL_TIME = 220
     const COL_NET = 520
-    const TIME_MAX_WIDTH = 290 // available width before Net column starts
+    const TIME_MAX_WIDTH = 290
 
     function drawHeader() {
       page.drawText('Date', { x: COL_DATE, y, size: 11, font: bold })
@@ -108,7 +123,6 @@ export async function GET(req: NextRequest) {
 
     drawHeader()
 
-    // Wraps a long time string into multiple lines that fit within TIME_MAX_WIDTH
     function wrapText(text: string, size: number, maxWidth: number): string[] {
       const words = text.split(', ')
       const lines: string[] = []

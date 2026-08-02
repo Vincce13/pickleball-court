@@ -7,9 +7,6 @@ export async function GET(req: NextRequest) {
 
     const now = new Date()
 
-    // The frontend (MonthlyReport.tsx) sends ?month=&year= — read those
-    // instead of the old, now-unused "period" param, which is why picking a
-    // month/year in the UI never actually changed the results before.
     const monthParam = searchParams.get('month')
     const yearParam = searchParams.get('year')
 
@@ -22,20 +19,32 @@ export async function GET(req: NextRequest) {
     const start = startDate.toISOString().split('T')[0]
     const end = endDate.toISOString().split('T')[0]
 
-    const { data, error } = await supabaseAdmin
-      .from('bookings')
-      .select('*')
-      .eq('status', 'completed')
-      .gte('booking_date', start)
-      .lte('booking_date', end)
-      .order('booking_date', { ascending: false })
+    // Query both the live bookings table AND the archive — once a month
+    // rolls over, that month's completed bookings move out of `bookings`
+    // and into `archived_bookings`, so a report for a past month would
+    // otherwise come back empty the moment archiving runs.
+    const [liveResult, archivedResult] = await Promise.all([
+      supabaseAdmin
+        .from('bookings')
+        .select('*')
+        .eq('status', 'completed')
+        .gte('booking_date', start)
+        .lte('booking_date', end),
+      supabaseAdmin
+        .from('archived_bookings')
+        .select('*')
+        .eq('status', 'completed')
+        .gte('booking_date', start)
+        .lte('booking_date', end),
+    ])
 
-    if (error) {
-      throw error
-    }
+    if (liveResult.error) throw liveResult.error
+    if (archivedResult.error) throw archivedResult.error
+
+    const data = [...(liveResult.data ?? []), ...(archivedResult.data ?? [])]
 
     const grouped = Object.values(
-      (data ?? []).reduce((acc: any, booking: any) => {
+      data.reduce((acc: any, booking: any) => {
         const key = booking.group_id ?? booking.id
 
         if (!acc[key]) {
@@ -60,6 +69,9 @@ export async function GET(req: NextRequest) {
         return acc
       }, {})
     )
+
+    // Sort newest-first, same as the original single-table query did
+    grouped.sort((a: any, b: any) => b.booking_date.localeCompare(a.booking_date))
 
     const completedTransactions = grouped.length
 

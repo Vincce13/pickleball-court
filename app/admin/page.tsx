@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2, CalendarSearch } from 'lucide-react'
+import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2, CalendarSearch, PlusCircle } from 'lucide-react'
 import MonthlyReport from '@/components/MonthlyReport'
 
 
@@ -77,6 +77,38 @@ function toMinutes(time: string) {
   return h * 60 + m
 }
 
+// Same pricing rule used on the booking form: weekends flat ₱200, weekdays
+// ₱150 before 4PM and ₱200 from 4PM on.
+function getSlotPrice(startTime: string, dateStr: string) {
+  const day = new Date(dateStr + 'T00:00:00').getDay()
+  const isWeekend = day === 0 || day === 5 || day === 6
+  if (isWeekend) return 200
+  const hour = Number(startTime.split(':')[0])
+  return hour < 16 ? 150 : 200
+}
+
+function addOneHourStr(time: string) {
+  const [h, m] = time.split(':').map(Number)
+  const total = h * 60 + m + 60
+  const endH = Math.floor(total / 60) % 24
+  const endM = total % 60
+  return `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`
+}
+
+const COURT_OPEN = '05:00'
+const COURT_CLOSE_START = '23:00' // last normal bookable start time (23:00-00:00)
+
+// Extension only ever goes forward (after the booking's last slot) — never
+// backward. The one exception: a booking ending at 12AM (i.e. its last slot
+// was 11PM-12AM) is still allowed to extend into 12AM-1AM, even though that's
+// past the normal closing boundary.
+function isValidExtensionStart(startTime: string) {
+  if (startTime === '00:00') return true
+  if (toMinutes(startTime) < toMinutes(COURT_OPEN)) return false
+  if (toMinutes(startTime) > toMinutes(COURT_CLOSE_START)) return false
+  return true
+}
+
 function calculateRefundPreview(
   slots: { start: string; end: string; amount: number }[],
   rainStart: string
@@ -105,9 +137,17 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
     const key = b.group_id ?? `single-${b.id}`
     const existing = map.get(key)
 
+    // Supabase returns time columns as "HH:MM:SS" — trim to "HH:MM" so every
+    // comparison against these values (extension checks, slot matching,
+    // etc.) uses a consistent format throughout the component. Without this,
+    // a booking ending at "00:00:00" never matched the "00:00" extension
+    // exception, and the extend button silently failed to appear.
+    const start = b.start_time.slice(0, 5)
+    const end = b.end_time.slice(0, 5)
+
     if (existing) {
       existing.ids.push(b.id)
-      existing.slots.push({ id: b.id, start: b.start_time, end: b.end_time, amount: b.amount })
+      existing.slots.push({ id: b.id, start, end, amount: b.amount })
       existing.totalAmount += b.amount
       existing.totalRefunded += b.refund_amount ?? 0
     } else {
@@ -119,7 +159,7 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
         email: b.email,
         phone: b.phone,
         booking_date: b.booking_date,
-        slots: [{ id: b.id, start: b.start_time, end: b.end_time, amount: b.amount }],
+        slots: [{ id: b.id, start, end, amount: b.amount }],
         totalAmount: b.amount,
         totalRefunded: b.refund_amount ?? 0,
         status: b.status,
@@ -149,6 +189,8 @@ export default function AdminDashboard() {
   const [refundPreview, setRefundPreview] = useState<number | null>(null)
   const [submittingRefund, setSubmittingRefund] = useState(false)
   const [rescheduleOpenKey, setRescheduleOpenKey] = useState<string | null>(null)
+  const [extendingKey, setExtendingKey] = useState<string | null>(null)
+  const [extendOpenKey, setExtendOpenKey] = useState<string | null>(null)
   const [newDate, setNewDate] = useState('')
   const [newStartTime, setNewStartTime] = useState('')
   const [newEndTime, setNewEndTime] = useState('')
@@ -374,6 +416,76 @@ export default function AdminDashboard() {
 
     } finally {
       setSubmittingReschedule(false)
+    }
+  }
+
+  // Works out whether the hour right after a booking's last slot is free,
+  // using the bookings + blockedSlots already loaded in state — no extra
+  // fetch needed. Forward-only: never offers extending backward before the
+  // booking's start.
+  function getExtensionOption(booking: GroupedBooking): string | null {
+    const lastEnd = booking.slots[booking.slots.length - 1].end
+    const candidate = lastEnd // e.g. last slot 11PM-12AM -> lastEnd "00:00"
+
+    if (!isValidExtensionStart(candidate)) return null
+
+    const takenElsewhere = bookings.some(
+      (bk) =>
+        bk.booking_date === booking.booking_date &&
+        bk.start_time.slice(0, 5) === candidate &&
+        bk.status !== 'cancelled' &&
+        !booking.ids.includes(bk.id)
+    )
+    if (takenElsewhere) return null
+
+    const blocked = blockedSlots.some(
+      (s) => s.booking_date === booking.booking_date && s.start_time.slice(0, 5) === candidate
+    )
+    if (blocked) return null
+
+    return candidate
+  }
+
+  async function extendBooking(booking: GroupedBooking, startTime: string) {
+    setExtendingKey(booking.key)
+
+    const endTime = addOneHourStr(startTime)
+    const amount = getSlotPrice(startTime, booking.booking_date)
+
+    try {
+      const res = await fetch('/api/admin/bookings/extend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupId: booking.groupId,
+          existingIds: booking.ids,
+          name: booking.name,
+          email: booking.email,
+          phone: booking.phone,
+          bookingDate: booking.booking_date,
+          startTime,
+          endTime,
+          amount,
+          status: booking.status,
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        setToast({ message: data.error ?? 'Unable to extend booking.', type: 'error' })
+        return
+      }
+
+      setToast({
+        message: `Extended ${booking.name}'s booking with ${formatSlotRange(startTime, endTime)} (₱${amount}).`,
+        type: 'success',
+      })
+
+      setExtendOpenKey(null)
+      await loadBookings()
+    } finally {
+      setExtendingKey(null)
     }
   }
 
@@ -702,6 +814,18 @@ if (filter === 'confirmed') {
     <CalendarDays className="w-4 h-4 text-amber-300" />
     </button>
 
+    {/* Extend — only shown if the hour right after this booking is free */}
+    {getExtensionOption(b) && (
+      <button
+        onClick={() => setExtendOpenKey(extendOpenKey === b.key ? null : b.key)}
+        disabled={extendingKey === b.key}
+        className="p-2 rounded-lg bg-cyan-400/10 hover:bg-cyan-400/20 transition-colors disabled:opacity-50"
+        title="Extend Booking"
+      >
+        <PlusCircle className="w-4 h-4 text-cyan-300" />
+      </button>
+    )}
+
     {/* Refund */}
     <button
       onClick={() => {
@@ -856,6 +980,36 @@ if (filter === 'confirmed') {
 
   </div>
 )}
+
+                  {extendOpenKey === b.key && (() => {
+                    const nextSlot = getExtensionOption(b)
+                    return (
+                      <div className="w-full bg-white/5 border border-cyan-400/30 rounded-lg p-4 space-y-3">
+                        <p className="text-sm text-[#B9C3BC]">
+                          Add the next hour to this booking. Only shown when it's currently vacant.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {nextSlot ? (
+                            <button
+                              onClick={() => extendBooking(b, nextSlot)}
+                              disabled={extendingKey === b.key}
+                              className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
+                            >
+                              + {formatSlotRange(nextSlot, addOneHourStr(nextSlot))} (₱{getSlotPrice(nextSlot, b.booking_date)})
+                            </button>
+                          ) : (
+                            <p className="text-xs text-[#8A948E]">The next hour is no longer free.</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setExtendOpenKey(null)}
+                          className="px-4 py-2 rounded-lg bg-white/5 text-[#B9C3BC] text-sm hover:bg-white/10 transition-colors"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}

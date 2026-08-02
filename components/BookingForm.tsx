@@ -5,9 +5,11 @@ import { supabase } from '@/lib/supabase'
 import { User, Mail, Phone, Calendar, QrCode, CheckCircle2, PartyPopper, ImageUp, Lock } from 'lucide-react'
 
 const TIME_SLOTS = [
+  '05:00',
   '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00',
   '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
+  
 ]
 
 const PEAK_PRICE = 200
@@ -528,7 +530,7 @@ export default function BookingForm() {
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#F1F2ED]">Choose Your Times</h2>
             <p className="text-xs text-[#8A948E] -mt-3">
-              You can select more than one hour. Weekdays: ₱{OFFPEAK_PRICE}/hr (6AM–4PM) · ₱{PEAK_PRICE}/hr (4PM–12AM). Fri–Sun: flat ₱{PEAK_PRICE}/hr.
+              You can select more than one hour. Weekdays: ₱{OFFPEAK_PRICE}/hr (5AM–4PM) · ₱{PEAK_PRICE}/hr (4PM–12AM). Fri–Sun: flat ₱{PEAK_PRICE}/hr.
             </p>
             <p className="text-xs text-[#8A948E] -mt-2 flex items-center gap-1">
               <Lock className="w-3 h-3" /> Selected slots are held for {HOLD_MINUTES} minutes.
@@ -682,6 +684,11 @@ export default function BookingForm() {
                 <QrCode className="w-4 h-4" />
               </div>
             </div>
+
+            <div className="text-center">
+  <p className="text-sm font-semibold text-[#9ED9B0]">MA***N CA***L D.</p>
+  <p className="text-xs text-[#8A948E]">+63 923 520 4866</p>
+</div>
 
             <div className="bg-white/5 border border-[#9ED9B0]/30 rounded-xl px-4 py-3">
               <p className="text-xs text-[#8A948E] mb-1">Amount to Pay</p>
