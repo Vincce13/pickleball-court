@@ -45,7 +45,7 @@ type BlockedSlot = {
 }
 
 const SCHEDULE_SLOTS = [
-  '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
+  '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00',
   '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
 ]
@@ -83,6 +83,11 @@ function getSlotPrice(startTime: string, dateStr: string) {
   const day = new Date(dateStr + 'T00:00:00').getDay()
   const isWeekend = day === 0 || day === 5 || day === 6
   if (isWeekend) return 200
+  // "00:00" is the 12AM-1AM extension hour right after 11PM-12AM — it's a
+  // continuation of the late-night tier, not the start of a new early
+  // morning, so it should price the same as 4PM-12AM (₱200), not read as
+  // hour 0 and fall into the ₱150 before-4PM bucket.
+  if (startTime === '00:00') return 200
   const hour = Number(startTime.split(':')[0])
   return hour < 16 ? 150 : 200
 }
@@ -150,6 +155,14 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
       existing.slots.push({ id: b.id, start, end, amount: b.amount })
       existing.totalAmount += b.amount
       existing.totalRefunded += b.refund_amount ?? 0
+      // Extension rows are inserted with proof_url: null (no new payment
+      // screenshot for the extra hour). If the array happens to put one of
+      // those rows first for this group (e.g. "05:00" or "00:00" sorting
+      // before the original slot's start time), the original row's real
+      // proof URL would otherwise get lost. Keep whichever value is real.
+      if (!existing.proof_url && b.proof_url) {
+        existing.proof_url = b.proof_url
+      }
     } else {
       map.set(key, {
         key,
@@ -428,6 +441,36 @@ export default function AdminDashboard() {
     const candidate = lastEnd // e.g. last slot 11PM-12AM -> lastEnd "00:00"
 
     if (!isValidExtensionStart(candidate)) return null
+
+    const takenElsewhere = bookings.some(
+      (bk) =>
+        bk.booking_date === booking.booking_date &&
+        bk.start_time.slice(0, 5) === candidate &&
+        bk.status !== 'cancelled' &&
+        !booking.ids.includes(bk.id)
+    )
+    if (takenElsewhere) return null
+
+    const blocked = blockedSlots.some(
+      (s) => s.booking_date === booking.booking_date && s.start_time.slice(0, 5) === candidate
+    )
+    if (blocked) return null
+
+    return candidate
+  }
+
+  // Mirror of getExtensionOption, but checks BACKWARD — only offered when
+  // this booking's very first slot starts at court opening time (05:00),
+  // letting admin extend it earlier to 04:00 as a one-off exception.
+  // NOTE: This must live INSIDE the component (unlike getExtensionOption's
+  // sibling helpers above) because it reads `bookings` and `blockedSlots`
+  // state — defining it at module scope caused a ReferenceError since
+  // neither variable exists outside the component.
+  function getEarlyExtensionOption(booking: GroupedBooking): string | null {
+    const firstStart = booking.slots[0].start
+    if (firstStart !== '05:00') return null
+
+    const candidate = '04:00'
 
     const takenElsewhere = bookings.some(
       (bk) =>
@@ -815,16 +858,16 @@ if (filter === 'confirmed') {
     </button>
 
     {/* Extend — only shown if the hour right after this booking is free */}
-    {getExtensionOption(b) && (
-      <button
-        onClick={() => setExtendOpenKey(extendOpenKey === b.key ? null : b.key)}
-        disabled={extendingKey === b.key}
-        className="p-2 rounded-lg bg-cyan-400/10 hover:bg-cyan-400/20 transition-colors disabled:opacity-50"
-        title="Extend Booking"
-      >
-        <PlusCircle className="w-4 h-4 text-cyan-300" />
-      </button>
-    )}
+   {(getExtensionOption(b) || getEarlyExtensionOption(b)) && (
+  <button
+    onClick={() => setExtendOpenKey(extendOpenKey === b.key ? null : b.key)}
+    disabled={extendingKey === b.key}
+    className="p-2 rounded-lg bg-cyan-400/10 hover:bg-cyan-400/20 transition-colors disabled:opacity-50"
+    title="Extend Booking"
+  >
+    <PlusCircle className="w-4 h-4 text-cyan-300" />
+  </button>
+)}
 
     {/* Refund */}
     <button
@@ -981,35 +1024,48 @@ if (filter === 'confirmed') {
   </div>
 )}
 
-                  {extendOpenKey === b.key && (() => {
-                    const nextSlot = getExtensionOption(b)
-                    return (
-                      <div className="w-full bg-white/5 border border-cyan-400/30 rounded-lg p-4 space-y-3">
-                        <p className="text-sm text-[#B9C3BC]">
-                          Add the next hour to this booking. Only shown when it's currently vacant.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {nextSlot ? (
-                            <button
-                              onClick={() => extendBooking(b, nextSlot)}
-                              disabled={extendingKey === b.key}
-                              className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
-                            >
-                              + {formatSlotRange(nextSlot, addOneHourStr(nextSlot))} (₱{getSlotPrice(nextSlot, b.booking_date)})
-                            </button>
-                          ) : (
-                            <p className="text-xs text-[#8A948E]">The next hour is no longer free.</p>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => setExtendOpenKey(null)}
-                          className="px-4 py-2 rounded-lg bg-white/5 text-[#B9C3BC] text-sm hover:bg-white/10 transition-colors"
-                        >
-                          Close
-                        </button>
-                      </div>
-                    )
-                  })()}
+                {extendOpenKey === b.key && (() => {
+  const nextSlot = getExtensionOption(b)
+  const earlySlot = getEarlyExtensionOption(b)
+  const hasAnyOption = nextSlot || earlySlot
+
+  return (
+    <div className="w-full bg-white/5 border border-cyan-400/30 rounded-lg p-4 space-y-3">
+      <p className="text-sm text-[#B9C3BC]">
+        Add an hour to this booking. Only shown when it's currently vacant.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {earlySlot && (
+          <button
+            onClick={() => extendBooking(b, earlySlot)}
+            disabled={extendingKey === b.key}
+            className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
+          >
+            + {formatSlotRange(earlySlot, addOneHourStr(earlySlot))} early (₱{getSlotPrice(earlySlot, b.booking_date)})
+          </button>
+        )}
+        {nextSlot && (
+          <button
+            onClick={() => extendBooking(b, nextSlot)}
+            disabled={extendingKey === b.key}
+            className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
+          >
+            + {formatSlotRange(nextSlot, addOneHourStr(nextSlot))} (₱{getSlotPrice(nextSlot, b.booking_date)})
+          </button>
+        )}
+        {!hasAnyOption && (
+          <p className="text-xs text-[#8A948E]">No adjacent hour is currently free.</p>
+        )}
+      </div>
+      <button
+        onClick={() => setExtendOpenKey(null)}
+        className="px-4 py-2 rounded-lg bg-white/5 text-[#B9C3BC] text-sm hover:bg-white/10 transition-colors"
+      >
+        Close
+      </button>
+    </div>
+  )
+})()}
                 </div>
               )
             })}
