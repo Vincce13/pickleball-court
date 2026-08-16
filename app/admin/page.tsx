@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LogOut, CheckCircle2, XCircle, ImageIcon, Loader2, CheckCheck, CloudRain, CalendarDays, BarChart3, Ban, Trash2, CalendarSearch, PlusCircle } from 'lucide-react'
 import MonthlyReport from '@/components/MonthlyReport'
+import { Users2 } from 'lucide-react'
+import { UserCheck } from 'lucide-react'
 
 
 type Booking = {
@@ -77,19 +79,19 @@ function toMinutes(time: string) {
   return h * 60 + m
 }
 
-// Same pricing rule used on the booking form: weekends flat ₱200, weekdays
-// ₱150 before 4PM and ₱200 from 4PM on.
+// Whether a given hourly slot's start time falls inside a [rangeStart, rangeEnd)
+// window. Used by the Day Schedule modal so that a single block/booking/open-play
+// row spanning MULTIPLE hours (e.g. 06:00-08:00) correctly lights up every hourly
+// slot it covers, not just the one whose start_time happens to match exactly.
+function timeInRange(slot: string, rangeStart: string, rangeEnd: string) {
+  const slotMin = toMinutes(slot)
+  return slotMin >= toMinutes(rangeStart) && slotMin < toMinutes(rangeEnd)
+}
+
+// Same pricing rule used on the booking form: flat ₱200/hr, every day of the
+// week, 5AM-12AM — no more weekday/weekend or off-peak/peak split.
 function getSlotPrice(startTime: string, dateStr: string) {
-  const day = new Date(dateStr + 'T00:00:00').getDay()
-  const isWeekend = day === 0 || day === 5 || day === 6
-  if (isWeekend) return 200
-  // "00:00" is the 12AM-1AM extension hour right after 11PM-12AM — it's a
-  // continuation of the late-night tier, not the start of a new early
-  // morning, so it should price the same as 4PM-12AM (₱200), not read as
-  // hour 0 and fall into the ₱150 before-4PM bucket.
-  if (startTime === '00:00') return 200
-  const hour = Number(startTime.split(':')[0])
-  return hour < 16 ? 150 : 200
+  return 200
 }
 
 function addOneHourStr(time: string) {
@@ -626,6 +628,139 @@ if (filter === 'confirmed') {
     refunded: 'bg-purple-400/15 text-purple-300 border-purple-400/30',
   }
 
+
+  const [openPlayModalOpen, setOpenPlayModalOpen] = useState(false)
+const [openPlaySessions, setOpenPlaySessions] = useState<any[]>([])
+const [opDate, setOpDate] = useState('')
+const [opStart, setOpStart] = useState('')
+const [opEnd, setOpEnd] = useState('')
+const [opMax, setOpMax] = useState('')
+const [opPrice, setOpPrice] = useState('')
+const [opTitle, setOpTitle] = useState('')
+const [submittingOp, setSubmittingOp] = useState(false)
+const [opPreviewUrl, setOpPreviewUrl] = useState<string | null>(null)
+const [viewingSession, setViewingSession] = useState<any | null>(null)
+const [participantSearch, setParticipantSearch] = useState('')
+
+
+async function loadOpenPlaySessions() {
+  const res = await fetch('/api/admin/open-play')
+  const data = await res.json()
+  if (res.ok) setOpenPlaySessions(data.sessions)
+}
+
+async function submitOpenPlay() {
+  if (!opDate || !opStart || !opEnd || !opMax || !opPrice) return
+  setSubmittingOp(true)
+
+  try {
+    const res = await fetch('/api/admin/open-play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionDate: opDate,
+        startTime: opStart,
+        endTime: opEnd,
+        maxParticipants: Number(opMax),
+        pricePerPerson: Number(opPrice),
+        title: opTitle || 'Open Play',
+      }),
+    })
+
+    if (!res.ok) {
+      setToast({ message: 'Something went wrong creating the session.', type: 'error' })
+      return
+    }
+
+    setToast({ message: 'Open Play session created.', type: 'success' })
+    setOpDate('')
+    setOpStart('')
+    setOpEnd('')
+    setOpMax('')
+    setOpPrice('')
+    setOpTitle('')
+    await loadOpenPlaySessions()
+  } finally {
+    setSubmittingOp(false)
+  }
+}
+const [opSearch, setOpSearch] = useState('')
+const filteredOpenPlaySessions = openPlaySessions.filter((s) => {
+  const query = opSearch.toLowerCase().trim()
+  if (!query) return true
+  return (
+    s.title.toLowerCase().includes(query) ||
+    s.session_date.includes(query) ||
+    String(s.price_per_person).includes(query)
+  )
+})
+
+async function deleteOpenPlaySession(id: number) {
+  if (!confirm('Delete this Open Play session? This removes it for customers too.')) return
+  await fetch(`/api/admin/open-play/${id}`, { method: 'DELETE' })
+  await loadOpenPlaySessions()
+}
+
+async function updateParticipantStatus(participantId: number, status: string, participant?: any, session?: any) {
+  await fetch(`/api/admin/open-play/participants/${participantId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+
+  if ((status === 'confirmed' || status === 'cancelled') && participant && session) {
+    fetch('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: participant.email,
+        name: participant.name,
+        bookingDate: session.session_date,
+        sessionTitle: session.title,
+        slotNumbers: [participant.slot_number],
+        totalAmount: participant.amount,
+        status: status === 'confirmed' ? 'openplay_confirmed' : 'openplay_cancelled',
+      }),
+    }).catch(() => {})
+  }
+
+  await loadOpenPlaySessions()
+}
+
+useEffect(() => {
+  loadBookings()
+  loadBlockedSlots()
+  loadOpenPlaySessions()
+}, [])
+
+async function markArrived(participantId: number, arrived: boolean) {
+  await fetch(`/api/admin/open-play/participants/${participantId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arrived }),
+  })
+  await loadOpenPlaySessions()
+}
+
+async function finishOpenPlaySession(sessionId: number) {
+  if (!confirm('Finish this session? Its total revenue will be added to this month\'s report.')) return
+
+  const res = await fetch('/api/admin/open-play/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  })
+  const data = await res.json()
+
+  if (!res.ok) {
+    setToast({ message: 'Something went wrong finishing this session.', type: 'error' })
+    return
+  }
+
+  setToast({ message: `Session finished — ₱${data.total} added to the report.`, type: 'success' })
+  await loadOpenPlaySessions()
+}
+
   return (
     <main className="min-h-[100dvh] bg-[#13291F] text-[#F1F2ED] px-2 sm:px-6 lg:px-8 py-6">
       <div className="w-full max-w-7xl mx-auto">
@@ -656,6 +791,15 @@ if (filter === 'confirmed') {
             <CalendarSearch className="w-4 h-4" />
              Schedule
             </button>
+
+
+            <button
+  onClick={() => setOpenPlayModalOpen(true)}
+  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 text-purple-300 transition-colors"
+>
+  <Users2 className="w-4 h-4" />
+  Open Play
+</button>
 
             <button
               onClick={handleLogout}
@@ -1135,8 +1279,28 @@ if (filter === 'confirmed') {
       ) : (
         <div className="space-y-2">
           {SCHEDULE_SLOTS.map((slot) => {
-            const booking = scheduleData?.bookings.find((b) => b.start_time.slice(0, 5) === slot)
-            const block = scheduleData?.blocked.find((b) => b.start_time.slice(0, 5) === slot)
+            // Range-based matching: a booking/block/open-play row that spans
+            // MULTIPLE hours (e.g. 06:00-08:00) must light up every hourly
+            // slot it covers, not just the one whose start_time matches
+            // exactly. This is what was causing "block 6-7 and 7-8" to only
+            // ever show the first hour as blocked.
+            const booking = scheduleData?.bookings.find(
+              (bk) =>
+                bk.status !== 'cancelled' &&
+                timeInRange(slot, bk.start_time.slice(0, 5), bk.end_time.slice(0, 5))
+            )
+            const block = scheduleData?.blocked.find((bl) =>
+              timeInRange(slot, bl.start_time.slice(0, 5), bl.end_time.slice(0, 5))
+            )
+            // Open Play sessions weren't being checked against the schedule
+            // at all before — they live in `openPlaySessions` (already
+            // loaded client-side), not in `scheduleData`, so they never had
+            // a chance to show up here.
+            const openPlaySession = openPlaySessions.find(
+              (s) =>
+                s.session_date === scheduleDate &&
+                timeInRange(slot, s.start_time.slice(0, 5), s.end_time.slice(0, 5))
+            )
 
             let bg = 'bg-[#9ED9B0]/10 border-[#9ED9B0]/30'
             let label = 'Vacant'
@@ -1153,6 +1317,13 @@ if (filter === 'confirmed') {
               bg = 'bg-red-500/10 border-red-500/30'
               label = 'Blocked'
               sub = block.reason
+            } else if (openPlaySession) {
+              bg = 'bg-purple-400/10 border-purple-400/30'
+              label = 'Open Play'
+              const activeCount = (openPlaySession.open_play_participants ?? []).filter(
+                (p: any) => p.status !== 'cancelled'
+              ).length
+              sub = `${openPlaySession.title} (${activeCount}/${openPlaySession.max_participants})`
             }
 
             return (
@@ -1173,6 +1344,318 @@ if (filter === 'confirmed') {
     </div>
   </div>
 )}
+
+{openPlayModalOpen && (
+  <div
+    className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6"
+    onClick={(e) => {
+      if (e.target === e.currentTarget) setOpenPlayModalOpen(false)
+    }}
+  >
+    <div
+      className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-[#13291F] border border-purple-400/20 p-4 sm:p-6"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-xl font-bold">Open Play Sessions</h2>
+        <button
+          onClick={() => setOpenPlayModalOpen(false)}
+          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm"
+        >
+          Close
+        </button>
+      </div>
+
+      {/* Create form */}
+      <div className="space-y-3 mb-6 bg-white/5 border border-white/10 rounded-lg p-4">
+        <p className="text-sm font-semibold">Create New Session</p>
+
+        <input
+          type="text"
+          value={opTitle}
+          onChange={(e) => setOpTitle(e.target.value)}
+          placeholder="Title (e.g. Beginner Open Play)"
+          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] outline-none focus:border-purple-400"
+        />
+
+        <input
+          type="date"
+          value={opDate}
+          onChange={(e) => setOpDate(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-purple-400"
+        />
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-[#8A948E] mb-1">Start Time</label>
+            <input
+              type="time"
+              value={opStart}
+              onChange={(e) => setOpStart(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-purple-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-[#8A948E] mb-1">End Time</label>
+            <input
+              type="time"
+              value={opEnd}
+              onChange={(e) => setOpEnd(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] [color-scheme:dark] outline-none focus:border-purple-400"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-[#8A948E] mb-1">Max Participants</label>
+            <input
+              type="number"
+              min="1"
+              value={opMax}
+              onChange={(e) => setOpMax(e.target.value)}
+              placeholder="20"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] outline-none focus:border-purple-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-[#8A948E] mb-1">Price per Person</label>
+            <input
+              type="number"
+              min="0"
+              value={opPrice}
+              onChange={(e) => setOpPrice(e.target.value)}
+              placeholder="150"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] outline-none focus:border-purple-400"
+            />
+          </div>
+        </div>
+
+        <button
+          onClick={submitOpenPlay}
+          disabled={submittingOp || !opDate || !opStart || !opEnd || !opMax || !opPrice}
+          className="w-full bg-purple-400 text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-purple-300 active:scale-95 disabled:opacity-40 transition-all"
+        >
+          {submittingOp ? 'Creating...' : 'Create Session'}
+        </button>
+      </div>
+
+      {/* Existing sessions */}
+     <div>
+  <div className="flex items-center justify-between mb-2">
+    <p className="text-sm font-semibold">Upcoming Sessions</p>
+    <input
+      type="text"
+      value={opSearch}
+      onChange={(e) => setOpSearch(e.target.value)}
+      placeholder="Search by title, date, price..."
+      className="w-48 px-3 py-1.5 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] text-xs outline-none focus:border-purple-400"
+    />
+  </div>
+  {openPlaySessions.length === 0 ? (
+    <p className="text-xs text-[#8A948E]">No sessions created yet.</p>
+  ) : filteredOpenPlaySessions.length === 0 ? (
+    <p className="text-xs text-[#8A948E]">No sessions match your search.</p>
+  ) : (
+    <div className="space-y-3">
+      {filteredOpenPlaySessions.map((s) => {
+              const participants = s.open_play_participants ?? []
+              const activeCount = participants.filter((p: any) => p.status !== 'cancelled').length
+
+              return (
+                <div key={s.id} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                 <div className="flex items-center justify-between mb-2">
+  <div>
+    <p className="text-sm font-medium">{s.title}</p>
+    <p className="text-xs text-[#8A948E]">
+      {s.session_date} · {s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · ₱{s.price_per_person}/person · {activeCount}/{s.max_participants} joined
+    </p>
+  </div>
+  <div className="flex items-center gap-1">
+   <button
+ onClick={() => {
+  setViewingSession(s)
+  setParticipantSearch('')
+}}
+  className="px-3 py-1.5 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 text-purple-200 text-xs font-medium transition-colors"
+>
+  View ({participants.length})
+</button>
+{!s.status_finished && (
+  <button
+    onClick={() => finishOpenPlaySession(s.id)}
+    className="px-3 py-1.5 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 text-blue-200 text-xs font-medium transition-colors"
+  >
+    Finish
+  </button>
+)}
+{s.status_finished && (
+  <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[#8A948E] text-xs">
+    Finished — ₱{s.finished_total}
+  </span>
+)}
+    <button
+      onClick={() => deleteOpenPlaySession(s.id)}
+      className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+      title="Delete session"
+    >
+      <Trash2 className="w-4 h-4 text-red-300" />
+    </button>
+  </div>
+</div>
+
+              {viewingSession && (
+  <div
+    className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-2 sm:p-6"
+    onClick={(e) => {
+      if (e.target === e.currentTarget) setViewingSession(null)
+    }}
+  >
+    <div
+      className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl bg-[#13291F] border border-purple-400/25 p-4 sm:p-6"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-bold">{viewingSession.title}</h3>
+          <p className="text-xs text-[#8A948E]">
+            {viewingSession.session_date} · {viewingSession.start_time.slice(0, 5)}-{viewingSession.end_time.slice(0, 5)}
+          </p>
+        </div>
+        <button
+          onClick={() => setViewingSession(null)}
+          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm"
+        >
+          Close
+        </button>
+      </div>
+
+    {(() => {
+  const current = openPlaySessions.find((sess) => sess.id === viewingSession.id)
+  const allParticipants = current?.open_play_participants ?? []
+
+  const participants = allParticipants.filter((p: any) => {
+    const query = participantSearch.toLowerCase().trim()
+    if (!query) return true
+    return (
+      p.name.toLowerCase().includes(query) ||
+      p.phone.toLowerCase().includes(query) ||
+      p.status.toLowerCase().includes(query)
+    )
+  })
+
+  if (allParticipants.length === 0) {
+    return <p className="text-sm text-[#8A948E]">No one has joined this session yet.</p>
+  }
+
+  return (
+    <>
+      <input
+        type="text"
+        value={participantSearch}
+        onChange={(e) => setParticipantSearch(e.target.value)}
+        placeholder="Search by name, phone, or status..."
+        className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] placeholder:text-[#8A948E] text-sm outline-none focus:border-purple-400"
+      />
+      {participants.length === 0 ? (
+        <p className="text-sm text-[#8A948E]">No participants match your search.</p>
+      ) : (
+        <div className="space-y-2">
+          {participants.map((p: any) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2.5"
+              >
+                <div>
+                  <span className="text-sm font-medium">{p.name}</span>{' '}
+                  <span className="text-xs text-[#8A948E]">{p.phone}</span>
+                  <div className="mt-1">
+                   <span
+  className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+    p.status === 'confirmed'
+      ? 'bg-[#9ED9B0]/15 text-[#9ED9B0]'
+      : p.status === 'cancelled'
+      ? 'bg-red-500/15 text-red-300'
+      : 'bg-yellow-500/15 text-yellow-300'
+  }`}
+>
+  {p.status}
+</span>
+{p.arrived && (
+  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-blue-400/15 text-blue-300">
+    arrived
+  </span>
+)}
+                  </div>
+                </div>
+               <div className="flex items-center gap-1">
+  {p.proof_url && (
+    <button
+      onClick={() => setOpPreviewUrl(p.proof_url)}
+      className="p-1.5 rounded-lg hover:bg-white/10"
+      title="View proof"
+    >
+      <ImageIcon className="w-4 h-4 text-[#9ED9B0]" />
+    </button>
+  )}
+  {p.status !== 'confirmed' && (
+    <button
+  onClick={() => updateParticipantStatus(p.id, 'confirmed', p, viewingSession)}
+      className="p-1.5 rounded-lg hover:bg-white/10"
+      title="Confirm"
+    >
+      <CheckCircle2 className="w-4 h-4 text-[#9ED9B0]" />
+    </button>
+  )}
+  {p.status === 'confirmed' ? (
+    <button
+      onClick={() => markArrived(p.id, !p.arrived)}
+      className={`p-1.5 rounded-lg hover:bg-white/10 ${p.arrived ? 'bg-blue-400/10' : ''}`}
+      title={p.arrived ? 'Arrived — click to undo' : 'Mark as arrived'}
+    >
+      <UserCheck className={`w-4 h-4 ${p.arrived ? 'text-blue-300' : 'text-[#8A948E]'}`} />
+    </button>
+  ) : (
+    <button
+  onClick={() => updateParticipantStatus(p.id, 'cancelled', p, viewingSession)}
+      className="p-1.5 rounded-lg hover:bg-white/10"
+      title="Cancel"
+    >
+      <XCircle className="w-4 h-4 text-red-300" />
+    </button>
+  )}
+</div>
+              </div>
+))}
+        </div>
+      )}
+    </>
+  )
+})()}
+    </div>
+  </div>
+)}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+
+
+{opPreviewUrl && (
+  <div
+    className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
+    onClick={() => setOpPreviewUrl(null)}
+  >
+    <img src={opPreviewUrl} alt="Payment proof" className="max-w-full max-h-full rounded-lg" />
+  </div>
+)}
+
 
       {blockOpen && (
         <div

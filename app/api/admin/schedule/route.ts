@@ -33,5 +33,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: blockedError.message }, { status: 500 })
   }
 
-  return NextResponse.json({ bookings: bookings ?? [], blocked: blocked ?? [] })
+  const { data: openPlay, error: openPlayError } = await supabaseAdmin
+    .from('open_play_sessions')
+    .select('start_time, end_time, title')
+    .eq('session_date', date)
+    .eq('status', 'active')
+
+  if (openPlayError) {
+    return NextResponse.json({ error: openPlayError.message }, { status: 500 })
+  }
+
+  return NextResponse.json({
+    bookings: bookings ?? [],
+    blocked: blocked ?? [],
+    openPlay: openPlay ?? [],
+  })
 }

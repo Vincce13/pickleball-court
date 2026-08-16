@@ -251,6 +251,9 @@ export default function MonthlyReport() {
                         )
                         .join(', ')
 
+                        const isOpenPlay = booking.group_id.startsWith('openplay-')
+                        {isOpenPlay ? 'Open Play' : `${timeText} (${booking.slots.length} hr${booking.slots.length > 1 ? 's' : ''})`}
+
                       return (
 
                         <tr

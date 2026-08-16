@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
     const data = [...(liveResult.data ?? []), ...(archivedResult.data ?? [])]
 
-    const grouped = Object.values(
+    const grouped: any[] = Object.values(
       data.reduce((acc: any, booking: any) => {
         const key = booking.group_id ?? booking.id
 
@@ -70,33 +70,39 @@ export async function GET(req: NextRequest) {
       }, {})
     )
 
-    // Sort newest-first, same as the original single-table query did
-    grouped.sort((a: any, b: any) => b.booking_date.localeCompare(a.booking_date))
+    // Pull finished Open Play sessions for this month and fold each one in
+    // as a single lump-sum row — no per-slot detail, just date + total.
+    const { data: openPlayData, error: openPlayError } = await supabaseAdmin
+      .from('open_play_sessions')
+      .select('id, session_date, title, finished_total')
+      .eq('status_finished', true)
+      .gte('session_date', start)
+      .lte('session_date', end)
 
-    const completedTransactions = grouped.length
+    if (openPlayError) throw openPlayError
 
-    const grossRevenue = grouped.reduce(
-      (sum: number, booking: any) => sum + booking.total_amount,
-      0
-    )
+    const openPlayRows = (openPlayData ?? []).map((s: any) => ({
+      group_id: `openplay-${s.id}`,
+      name: 'Open Play',
+      booking_date: s.session_date,
+      total_amount: s.finished_total,
+      refund_amount: 0,
+      slots: [],
+    }))
 
-    const refunds = grouped.reduce(
-      (sum: number, booking: any) => sum + booking.refund_amount,
-      0
-    )
+    const combined = [...grouped, ...openPlayRows]
 
+    // Sort newest-first
+    combined.sort((a: any, b: any) => b.booking_date.localeCompare(a.booking_date))
+
+    const completedTransactions = combined.length
+    const grossRevenue = combined.reduce((sum: number, b: any) => sum + b.total_amount, 0)
+    const refunds = combined.reduce((sum: number, b: any) => sum + b.refund_amount, 0)
     const netRevenue = grossRevenue - refunds
 
     return NextResponse.json({
-      summary: {
-        completedTransactions,
-        grossRevenue,
-        refunds,
-        netRevenue,
-        month,
-        year,
-      },
-      transactions: grouped,
+      summary: { completedTransactions, grossRevenue, refunds, netRevenue, month, year },
+      transactions: combined,
     })
   } catch (error) {
     console.error(error)

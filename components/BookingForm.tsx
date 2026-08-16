@@ -12,19 +12,14 @@ const TIME_SLOTS = [
   
 ]
 
-const PEAK_PRICE = 200
-const OFFPEAK_PRICE = 150
+// Flat rate: ₱200/hr, every day of the week, 5AM-12AM. There's no more
+// weekday/weekend or peak/off-peak split — every slot in TIME_SLOTS costs
+// the same.
+const HOURLY_PRICE = 200
 const HOLD_MINUTES = 3
 
-function isWeekend(dateStr: string) {
-  const day = new Date(dateStr + 'T00:00:00').getDay()
-  return day === 0 || day === 5 || day === 6
-}
-
 function getSlotPrice(slot: string, dateStr: string) {
-  if (isWeekend(dateStr)) return PEAK_PRICE
-  const hour = Number(slot.split(':')[0])
-  return hour < 16 ? OFFPEAK_PRICE : PEAK_PRICE
+  return HOURLY_PRICE
 }
 
 function formatHour(time: string) {
@@ -57,12 +52,20 @@ function getLocalDateString(date: Date = new Date()) {
   return `${year}-${month}-${day}`
 }
 
+
+
+
+
 function IconCircle({ Icon }: { Icon: typeof User }) {
   return (
     <div className="absolute left-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-[#9ED9B0]/10 flex items-center justify-center">
       <Icon className="w-3.5 h-3.5 text-[#9ED9B0]" />
     </div>
   )
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
 }
 
 export default function BookingForm() {
@@ -82,10 +85,11 @@ export default function BookingForm() {
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [conflictNotice, setConflictNotice] = useState<string | null>(null)
   const [holdError, setHoldError] = useState<string | null>(null)
-
+const [emailSuggestion, setEmailSuggestion] = useState<string | null>(null)
   const [proofFile, setProofFile] = useState<File | null>(null)
   const [proofPreview, setProofPreview] = useState<string | null>(null)
-
+  const [checkingEmail, setCheckingEmail] = useState(false)
+const [phoneError, setPhoneError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [confirmed, setConfirmed] = useState(false)
@@ -104,6 +108,7 @@ export default function BookingForm() {
 
   const today = getLocalDateString()
   const isBookingToday = bookingDate === today
+  const [openPlaySlots, setOpenPlaySlots] = useState<string[]>([])
 
   function isPastSlot(slot: string) {
     if (!isBookingToday) return false
@@ -131,24 +136,53 @@ export default function BookingForm() {
         .eq('booking_date', bookingDate)
         .gt('expires_at', new Date().toISOString())
 
-      const { data: blockedData } = await supabase
-        .from('blocked_slots')
-        .select('start_time, reason')
-        .eq('booking_date', bookingDate)
+     const { data: blockedData } = await supabase
+  .from('blocked_slots')
+  .select('start_time, end_time, reason')
+  .eq('booking_date', bookingDate)
+
+        const { data: openPlayData } = await supabase
+  .from('open_play_sessions')
+  .select('start_time, end_time')
+  .eq('session_date', bookingDate)
+  .eq('status', 'active')
 
       setTakenSlots(
         (bookingsData ?? []).map((b) => b.start_time.slice(0, 5))
       )
 
-      setBlockedSlots(
-        (blockedData ?? []).map((b) => b.start_time.slice(0, 5))
-      )
+      const expandedBlockedHours: string[] = []
+const reasonMap: Record<string, string> = {}
 
-      const reasonMap: Record<string, string> = {}
-      ;(blockedData ?? []).forEach((b) => {
-        reasonMap[b.start_time.slice(0, 5)] = b.reason
-      })
-      setBlockedInfo(reasonMap)
+;(blockedData ?? []).forEach((b) => {
+  const start = b.start_time.slice(0, 5)
+  const end = b.end_time.slice(0, 5)
+  let current = start
+  let guard = 0
+  while (current !== end && guard < 24) {
+    expandedBlockedHours.push(current)
+    reasonMap[current] = b.reason
+    current = addOneHour(current)
+    guard++
+  }
+})
+
+setBlockedSlots(expandedBlockedHours)
+setBlockedInfo(reasonMap)
+
+      const openPlayHours: string[] = []
+;(openPlayData ?? []).forEach((session) => {
+  const start = session.start_time.slice(0, 5)
+  const end = session.end_time.slice(0, 5)
+  let current = start
+  let guard = 0
+  while (current !== end && guard < 24) {
+    openPlayHours.push(current)
+    current = addOneHour(current)
+    guard++
+  }
+})
+setOpenPlaySlots(openPlayHours)
 
       setHeldByOthers(
         (holdsData ?? [])
@@ -288,10 +322,59 @@ export default function BookingForm() {
     return false
   }
 
-  function goToStep2(e: React.FormEvent) {
-    e.preventDefault()
-    setStep(2)
+ async function goToStep2(e: React.FormEvent) {
+  e.preventDefault()
+
+  if (!isValidEmail(email)) {
+    setError('Please enter a valid email address.')
+    return
   }
+  
+
+  const suggestion = suggestEmailCorrection(email)
+  if (suggestion) {
+    setError(`That email looks like a typo. Did you mean ${suggestion}?`)
+    return
+  }
+
+  if (phone.length !== 11) {
+  setPhoneError('Please enter a valid 11-digit mobile number.')
+  return
+}
+setPhoneError('')
+
+  setCheckingEmail(true)
+  
+  setError('')
+  
+
+
+  try {
+    const res = await fetch('/api/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    })
+    const data = await res.json()
+
+    if (!data.valid) {
+      setError('This email domain doesn\'t appear to be able to receive emails. Please double-check it.')
+      setCheckingEmail(false)
+      return
+    }
+    
+  } catch {
+    // If the check itself fails (network issue), don't block the customer —
+    // fail open rather than trap them on a working email due to our own error
+  }
+  
+
+  setCheckingEmail(false)
+  setStep(2)
+
+  
+}
+
 
   function goToStep3() {
     if (!bookingDate || selectedSlots.length === 0) return
@@ -446,6 +529,39 @@ export default function BookingForm() {
 
   const primaryBtnGlow = 'shadow-[0_4px_20px_-4px_rgba(158,217,176,0.6)]'
 
+  const COMMON_DOMAINS = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com']
+
+function levenshtein(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)])
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[a.length][b.length]
+}
+
+function suggestEmailCorrection(email: string): string | null {
+  const at = email.lastIndexOf('@')
+  if (at === -1) return null
+
+  const domain = email.slice(at + 1).toLowerCase()
+  if (COMMON_DOMAINS.includes(domain)) return null // already correct
+
+  for (const known of COMMON_DOMAINS) {
+    const distance = levenshtein(domain, known)
+    // Small edit distance = likely typo (e.g. "gmail.con" -> "gmail.com" is distance 1)
+    if (distance > 0 && distance <= 2) {
+      return email.slice(0, at + 1) + known
+    }
+  }
+  return null
+}
+
   if (confirmed && confirmedBooking) {
     return (
       <div className="max-w-md mx-auto p-8 bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-2xl border border-[#9ED9B0]/25 text-center animate-fade-up shadow-[0_0_40px_-8px_rgba(158,217,176,0.35),0_20px_50px_-15px_rgba(0,0,0,0.6)]">
@@ -508,21 +624,69 @@ export default function BookingForm() {
               <label className="block text-sm font-medium text-[#B9C3BC] mb-1">Email</label>
               <div className="relative">
                 <IconCircle Icon={Mail} />
-                <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" className={inputClass} />
+               <input
+  type="email"
+  required
+  value={email}
+  onChange={(e) => {
+    const value = e.target.value
+    setEmail(value)
+    setEmailSuggestion(isValidEmail(value) ? suggestEmailCorrection(value) : null)
+  }}
+  placeholder="you@email.com"
+  className={inputClass}
+/>
               </div>
             </div>
+            {error && <p className="text-red-400 text-xs -mt-2">{error}</p>}
+            {emailSuggestion && (
+  <p className="text-xs text-yellow-300 mt-1">
+    Did you mean{' '}
+    <button
+      type="button"
+      onClick={() => {
+        setEmail(emailSuggestion)
+        setEmailSuggestion(null)
+      }}
+      className="underline font-medium hover:text-yellow-200"
+    >
+      {emailSuggestion}
+    </button>
+    ?
+  </p>
+)}
 
             <div className="animate-fade-up" style={{ animationDelay: '0.19s' }}>
               <label className="block text-sm font-medium text-[#B9C3BC] mb-1">Mobile Number</label>
               <div className="relative">
                 <IconCircle Icon={Phone} />
-                <input type="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="09XX XXX XXXX" className={inputClass} />
-              </div>
+                <input
+  type="tel"
+  required
+  value={phone}
+ onChange={(e) => {
+  const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+  setPhone(digitsOnly)
+  setPhoneError('')
+}}
+  placeholder="09XX XXX XXXX"
+  maxLength={11}
+  className={inputClass}
+/>
+             </div>
+              {phoneError && <p className="text-red-400 text-xs mt-1">{phoneError}</p>}
             </div>
+            
 
-            <button type="submit" className={`w-full bg-[#9ED9B0] text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-[#8bcda0] active:scale-95 transition-all animate-fade-up ${primaryBtnGlow}`} style={{ animationDelay: '0.26s' }}>
-              Next: Choose a Time
-            </button>
+            <button
+            
+  type="submit"
+  disabled={checkingEmail}
+  className={`w-full bg-[#9ED9B0] text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-[#8bcda0] active:scale-95 transition-all animate-fade-up disabled:opacity-60 ${primaryBtnGlow}`}
+  style={{ animationDelay: '0.26s' }}
+>
+  {checkingEmail ? 'Checking email...' : 'Next: Choose a Time'}
+</button>
           </form>
         )}
 
@@ -530,7 +694,7 @@ export default function BookingForm() {
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#F1F2ED]">Choose Your Times</h2>
             <p className="text-xs text-[#8A948E] -mt-3">
-              You can select more than one hour. Weekdays: ₱{OFFPEAK_PRICE}/hr (5AM–4PM) · ₱{PEAK_PRICE}/hr (4PM–12AM). Fri–Sun: flat ₱{PEAK_PRICE}/hr.
+              You can select more than one hour. Flat ₱{HOURLY_PRICE}/hr, every day, 5AM–12AM.
             </p>
             <p className="text-xs text-[#8A948E] -mt-2 flex items-center gap-1">
               <Lock className="w-3 h-3" /> Selected slots are held for {HOLD_MINUTES} minutes.
@@ -576,16 +740,11 @@ export default function BookingForm() {
                   <div className="grid grid-cols-2 gap-2">
                     {TIME_SLOTS.map((slot) => {
                       const isTaken = takenSlots.includes(slot)
-                      const isHeld = heldByOthers.includes(slot)
-                      const isBlocked = blockedSlots.includes(slot)
+const isHeld = heldByOthers.includes(slot)
+const isBlocked = blockedSlots.includes(slot)
+const isOpenPlay = openPlaySlots.includes(slot)
 
-                      // Note: past-hour slots are intentionally NOT disabled or
-                      // styled differently here — they look identical to normal
-                      // available slots so booked/held/blocked ones stay clearly
-                      // distinguishable. toggleSlot() still blocks the click and
-                      // explains why via the warning banner above.
-                      const isDisabled = isTaken || isHeld || isBlocked
-
+const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
                       const isSelected = selectedSlots.includes(slot)
                       const isPopped = poppedSlot === slot
                       return (
@@ -594,40 +753,46 @@ export default function BookingForm() {
                           type="button"
                           disabled={isDisabled}
                           onClick={() => toggleSlot(slot)}
-                          className={`flex flex-col items-center text-sm py-2 rounded-lg border transition-all duration-150 ${
-                            isPopped ? 'scale-90' : 'scale-100'
-                          } ${
-                            isTaken
-                              ? 'bg-white/5 text-[#5A645E] border-white/10 cursor-not-allowed line-through'
-                              : isBlocked
-                              ? 'bg-red-600/15 text-red-300 border-red-500 cursor-not-allowed'
-                              : isHeld
-                              ? 'bg-yellow-500/5 text-yellow-500/60 border-yellow-500/20 cursor-not-allowed'
-                              : isSelected
-                              ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
-                              : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60 hover:bg-white/10'
-                          }`}
+                         className={`flex flex-col items-center text-sm py-2 rounded-lg border transition-all duration-150 ${
+  isPopped ? 'scale-90' : 'scale-100'
+} ${
+  isTaken
+    ? 'bg-white/5 text-[#5A645E] border-white/10 cursor-not-allowed line-through'
+    : isOpenPlay
+    ? 'bg-purple-600/15 text-purple-300 border-purple-500 cursor-not-allowed'
+    : isBlocked
+    ? 'bg-red-600/15 text-red-300 border-red-500 cursor-not-allowed'
+    : isHeld
+    ? 'bg-yellow-500/5 text-yellow-500/60 border-yellow-500/20 cursor-not-allowed'
+    : isSelected
+    ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
+    : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60 hover:bg-white/10'
+}`}
                         >
                           <span>{formatSlotRange(slot)}</span>
-                          <span
-                            className={`text-[10px] ${
-                              isSelected
-                                ? 'text-[#13291F]/70'
-                                : isBlocked
-                                ? 'text-red-300'
-                                : isHeld
-                                ? 'text-yellow-500/60'
-                                : 'text-[#8A948E]'
-                            }`}
-                          >
-                            {isTaken
-                              ? 'Booked'
-                              : isBlocked
-                              ? (blockedInfo[slot] ?? 'Blocked')
-                              : isHeld
-                              ? 'Held'
-                              : `₱${getSlotPrice(slot, bookingDate)}`}
-                          </span>
+                        <span
+  className={`text-[10px] ${
+    isSelected
+      ? 'text-[#13291F]/70'
+      : isOpenPlay
+      ? 'text-purple-300'
+      : isBlocked
+      ? 'text-red-300'
+      : isHeld
+      ? 'text-yellow-500/60'
+      : 'text-[#8A948E]'
+  }`}
+>
+  {isTaken
+    ? 'Booked'
+    : isOpenPlay
+    ? 'Open Play'
+    : isBlocked
+    ? (blockedInfo[slot] ?? 'Blocked')
+    : isHeld
+    ? 'Held'
+    : `₱${getSlotPrice(slot, bookingDate)}`}
+</span>
                         </button>
                       )
                     })}

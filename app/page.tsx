@@ -116,7 +116,7 @@ function formatSlotRange(time: string) {
   return `${format(start)} - ${format(end)}`
 }
 
-type SlotStatus = 'available' | 'booked' | 'past'
+type SlotStatus = 'available' | 'booked' | 'past' | 'blocked' | 'openplay'
 
 function TodayAvailability() {
   const [today, setToday] = useState(() => getLocalDateString())
@@ -136,50 +136,79 @@ function TodayAvailability() {
   }, [])
 
   useEffect(() => {
-    let cancelled = false
+  let cancelled = false
 
-    setLoading(true)
+  setLoading(true)
 
+  function addOneHourLocal(time: string) {
+    const [h, m] = time.split(':').map(Number)
+    return `${((h + 1) % 24).toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+  }
+
+  function expandRange(start: string, end: string) {
+    const hours: string[] = []
+    let current = start.slice(0, 5)
+    const stop = end.slice(0, 5)
+    let guard = 0
+    while (current !== stop && guard < 24) {
+      hours.push(current)
+      current = addOneHourLocal(current)
+      guard++
+    }
+    return hours
+  }
+
+  Promise.all([
     supabase
       .from('bookings')
       .select('start_time')
       .eq('booking_date', today)
-      .neq('status', 'cancelled')
-      .then(({ data, error }) => {
-        if (cancelled) return
+      .neq('status', 'cancelled'),
+    supabase
+      .from('blocked_slots')
+      .select('start_time, end_time')
+      .eq('booking_date', today),
+    supabase
+      .from('open_play_sessions')
+      .select('start_time, end_time')
+      .eq('session_date', today)
+      .eq('status', 'active'),
+  ]).then(([bookingsRes, blockedRes, openPlayRes]) => {
+    if (cancelled) return
 
-        if (!error && data) {
-          // start_time comes back from Postgres as "HH:MM:SS" (e.g. "06:00:00"),
-          // but TIME_SLOTS uses "HH:MM" (e.g. "06:00") — normalize to the same
-          // format before comparing, otherwise nothing ever matches and every
-          // slot looks "available" even when it's booked.
-          const bookedSlots = data.map((b) => b.start_time.slice(0, 5))
+    const bookedSlots = (bookingsRes.data ?? []).map((b) => b.start_time.slice(0, 5))
 
-          const now = new Date()
-          const isViewingToday = getLocalDateString(now) === today
-          const currentHour = now.getHours()
+    const blockedHours = new Set<string>()
+    ;(blockedRes.data ?? []).forEach((b) => {
+      expandRange(b.start_time, b.end_time).forEach((h) => blockedHours.add(h))
+    })
 
-          // Always list every hour starting at 6 AM, in order — never trim
-          // the list down to "whatever's left" so it stays a consistent,
-          // predictable full-day view. Each slot is just tagged with its
-          // status instead of being removed.
-          const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
-            const slotHour = Number(slot.split(':')[0])
-            if (bookedSlots.includes(slot)) return { slot, status: 'booked' }
-            if (isViewingToday && slotHour < currentHour) return { slot, status: 'past' }
-            return { slot, status: 'available' }
-          })
+    const openPlayHours = new Set<string>()
+    ;(openPlayRes.data ?? []).forEach((s) => {
+      expandRange(s.start_time, s.end_time).forEach((h) => openPlayHours.add(h))
+    })
 
-          setSlotStatuses(statuses)
-        }
+    const now = new Date()
+    const isViewingToday = getLocalDateString(now) === today
+    const currentHour = now.getHours()
 
-        setLoading(false)
-      })
+    const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
+      const slotHour = Number(slot.split(':')[0])
+      if (bookedSlots.includes(slot)) return { slot, status: 'booked' }
+      if (openPlayHours.has(slot)) return { slot, status: 'openplay' }
+      if (blockedHours.has(slot)) return { slot, status: 'blocked' }
+      if (isViewingToday && slotHour < currentHour) return { slot, status: 'past' }
+      return { slot, status: 'available' }
+    })
 
-    return () => {
-      cancelled = true
-    }
-  }, [today])
+    setSlotStatuses(statuses)
+    setLoading(false)
+  })
+
+  return () => {
+    cancelled = true
+  }
+}, [today])
 
   const availableCount = slotStatuses.filter((s) => s.status === 'available').length
 
@@ -335,6 +364,19 @@ export default function Home() {
   const [mobileMenu, setMobileMenu] = useState(false)
   const [totalBookings, setTotalBookings] = useState<number | null>(null)
   const [selectedImage, setSelectedImage] = useState<{ src: string; caption: string } | null>(null)
+  const [openPlayCount, setOpenPlayCount] = useState(0)
+
+
+  useEffect(() => {
+  supabase
+    .from('open_play_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'active')
+    .gte('session_date', new Date().toISOString().split('T')[0])
+    .then(({ count }) => {
+      setOpenPlayCount(count ?? 0)
+    })
+}, [])
 
   useEffect(() => {
     supabase
@@ -404,14 +446,20 @@ export default function Home() {
               </h1>
             </div>
           </Link>
-
-          <div className="hidden lg:flex items-center gap-10 font-medium text-[#D9E7DD]">
-            <a href="#why" className="hover:text-[#9ED9B0] transition duration-300">Why Us</a>
-            <a href="#features" className="hover:text-[#9ED9B0] transition duration-300">Features</a>
-            <a href="#gallery" className="hover:text-[#9ED9B0] transition duration-300">Gallery</a>
-            <a href="#location" className="hover:text-[#9ED9B0] transition duration-300">Location</a>
-          </div>
-
+<div className="hidden lg:flex items-center gap-10 font-medium text-[#D9E7DD]">
+  <a href="#why" className="hover:text-[#9ED9B0] transition duration-300">Why Us</a>
+  <a href="#features" className="hover:text-[#9ED9B0] transition duration-300">Features</a>
+ <Link href="/open-play" className="relative hover:text-[#9ED9B0] transition duration-300">
+  Open Play
+  {openPlayCount > 0 && (
+    <span className="absolute -top-2 -right-3 w-4 h-4 rounded-full bg-yellow-400 text-[9px] text-[#13291F] font-bold flex items-center justify-center">
+      {openPlayCount}
+    </span>
+  )}
+</Link>
+  <a href="#gallery" className="hover:text-[#9ED9B0] transition duration-300">Gallery</a>
+  <a href="#location" className="hover:text-[#9ED9B0] transition duration-300">Location</a>
+</div>
           <Link
             href="/booking"
             className="hidden lg:flex items-center px-7 py-3 rounded-full bg-[#9ED9B0] text-[#13291F] font-semibold shadow-[0_0_20px_rgba(158,217,176,0.5)] hover:scale-105 transition-all"
@@ -419,23 +467,36 @@ export default function Home() {
             Reserve
           </Link>
 
-          <button
-            onClick={() => setMobileMenu(!mobileMenu)}
-            className="lg:hidden text-[#9ED9B0]"
-          >
-            {mobileMenu ? <X size={30} /> : <Menu size={30} />}
-          </button>
+         <button
+  onClick={() => setMobileMenu(!mobileMenu)}
+  className="relative lg:hidden text-[#9ED9B0]"
+>
+  {mobileMenu ? <X size={30} /> : <Menu size={30} />}
+  {!mobileMenu && openPlayCount > 0 && (
+    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-yellow-400 text-[9px] text-[#13291F] font-bold flex items-center justify-center">
+      {openPlayCount}
+    </span>
+  )}
+</button>
         </div>
       </nav>
 
-      {mobileMenu && (
-        <div className="lg:hidden fixed top-24 left-4 right-4 z-40 rounded-2xl bg-[#0F211A]/95 backdrop-blur-xl border border-[#9ED9B0]/10 shadow-2xl overflow-hidden">
-          <a href="#why" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Why Us</a>
-          <a href="#features" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Features</a>
-          <a href="#gallery" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Gallery</a>
-          <a href="#location" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Location</a>
-        </div>
-      )}
+     {mobileMenu && (
+  <div className="lg:hidden fixed top-24 left-4 right-4 z-40 rounded-2xl bg-[#0F211A]/95 backdrop-blur-xl border border-[#9ED9B0]/10 shadow-2xl overflow-hidden">
+    <a href="#why" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Why Us</a>
+    <a href="#features" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Features</a>
+  <Link href="/open-play" onClick={() => setMobileMenu(false)} className="flex items-center justify-between px-6 py-4 border-b border-white/10 hover:bg-white/5">
+  Open Play
+  {openPlayCount > 0 && (
+    <span className="w-5 h-5 rounded-full bg-yellow-400 text-[10px] text-[#13291F] font-bold flex items-center justify-center">
+      {openPlayCount}
+    </span>
+  )}
+</Link>
+    <a href="#gallery" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Gallery</a>
+    <a href="#location" onClick={() => setMobileMenu(false)} className="block px-6 py-4 border-b border-white/10 hover:bg-white/5">Location</a>
+  </div>
+)}
 
       <section className="relative flex flex-col lg:flex-row lg:items-center lg:min-h-[100dvh] px-4 sm:px-6 lg:px-16 pt-36 pb-16 lg:pt-40 lg:pb-20">
         <div className="absolute inset-0 opacity-[0.1] animate-drift [background-image:linear-gradient(#ffffff_1px,transparent_1px),linear-gradient(90deg,#ffffff_1px,transparent_1px)] [background-size:64px_64px]" />
