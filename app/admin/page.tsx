@@ -85,7 +85,15 @@ function toMinutes(time: string) {
 // slot it covers, not just the one whose start_time happens to match exactly.
 function timeInRange(slot: string, rangeStart: string, rangeEnd: string) {
   const slotMin = toMinutes(slot)
-  return slotMin >= toMinutes(rangeStart) && slotMin < toMinutes(rangeEnd)
+  const startMin = toMinutes(rangeStart)
+  // A range ending at "00:00" means midnight, i.e. the END of the day — not
+  // hour 0 / the START of the day. Without this, a booking like 11PM-12AM
+  // (start "23:00", end "00:00") reads as startMin=1380, endMin=0, so
+  // "slotMin < endMin" is always false and the booking never matches any
+  // slot — it silently shows as "Vacant" in the schedule despite being
+  // confirmed. Treating a "00:00" end as 24:00 (1440) fixes the wraparound.
+  const endMin = rangeEnd === '00:00' ? 24 * 60 : toMinutes(rangeEnd)
+  return slotMin >= startMin && slotMin < endMin
 }
 
 // Same pricing rule used on the booking form: flat ₱200/hr, every day of the
