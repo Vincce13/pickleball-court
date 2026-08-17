@@ -97,9 +97,24 @@ function timeInRange(slot: string, rangeStart: string, rangeEnd: string) {
 }
 
 // Same pricing rule used on the booking form: flat ₱200/hr, every day of the
-// week, 5AM-12AM — no more weekday/weekend or off-peak/peak split.
-function getSlotPrice(startTime: string, dateStr: string) {
-  return 200
+// week, 5AM-12AM (no weekday/weekend or off-peak/peak split) — EXCEPT
+// parties/events/gatherings, which are ₱250/hr instead.
+const REGULAR_PRICE = 200
+const EVENT_PRICE = 250
+
+function getSlotPrice(startTime: string, dateStr: string, isEvent: boolean) {
+  return isEvent ? EVENT_PRICE : REGULAR_PRICE
+}
+
+// The bookings table has no explicit "is this an event" column — the
+// booking form instead charges a different per-slot amount (₱250 vs ₱200)
+// depending on what the customer picked in Step 1. So we derive the flag
+// here from the stored amount rather than adding a new field: if this
+// booking's slots were priced at the event rate, treat it as an event.
+// Used both for the "EVENT" badge and to keep extension pricing consistent
+// with however the original booking was priced.
+function isEventBooking(booking: GroupedBooking): boolean {
+  return booking.slots.length > 0 && booking.slots.every((s) => s.amount === EVENT_PRICE)
 }
 
 function addOneHourStr(time: string) {
@@ -503,7 +518,7 @@ export default function AdminDashboard() {
     setExtendingKey(booking.key)
 
     const endTime = addOneHourStr(startTime)
-    const amount = getSlotPrice(startTime, booking.booking_date)
+    const amount = getSlotPrice(startTime, booking.booking_date, isEventBooking(booking))
 
     try {
       const res = await fetch('/api/admin/bookings/extend', {
@@ -877,9 +892,18 @@ async function finishOpenPlaySession(sessionId: number) {
                     >
                       <div className="self-start">
 
-  {filter === 'confirmed' && b.booking_date === today && (
-    <div className="mb-2 inline-flex items-center rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-      📅 TODAY
+  {(  (filter === 'confirmed' && b.booking_date === today) || isEventBooking(b)) && (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      {filter === 'confirmed' && b.booking_date === today && (
+        <span className="inline-flex items-center rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+          📅 TODAY
+        </span>
+      )}
+      {isEventBooking(b) && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-purple-400/20 border border-purple-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-300">
+          🎉 EVENT
+        </span>
+      )}
     </div>
   )}
 
@@ -1180,11 +1204,13 @@ async function finishOpenPlaySession(sessionId: number) {
   const nextSlot = getExtensionOption(b)
   const earlySlot = getEarlyExtensionOption(b)
   const hasAnyOption = nextSlot || earlySlot
+  const eventBooking = isEventBooking(b)
 
   return (
     <div className="w-full bg-white/5 border border-cyan-400/30 rounded-lg p-4 space-y-3">
       <p className="text-sm text-[#B9C3BC]">
         Add an hour to this booking. Only shown when it's currently vacant.
+        {eventBooking && ' (Event rate applies.)'}
       </p>
       <div className="flex flex-wrap gap-2">
         {earlySlot && (
@@ -1193,7 +1219,7 @@ async function finishOpenPlaySession(sessionId: number) {
             disabled={extendingKey === b.key}
             className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
           >
-            + {formatSlotRange(earlySlot, addOneHourStr(earlySlot))} early (₱{getSlotPrice(earlySlot, b.booking_date)})
+            + {formatSlotRange(earlySlot, addOneHourStr(earlySlot))} early (₱{getSlotPrice(earlySlot, b.booking_date, eventBooking)})
           </button>
         )}
         {nextSlot && (
@@ -1202,7 +1228,7 @@ async function finishOpenPlaySession(sessionId: number) {
             disabled={extendingKey === b.key}
             className="px-4 py-2 rounded-lg bg-cyan-400/20 text-cyan-200 text-sm font-medium hover:bg-cyan-400/30 disabled:opacity-40 transition-colors"
           >
-            + {formatSlotRange(nextSlot, addOneHourStr(nextSlot))} (₱{getSlotPrice(nextSlot, b.booking_date)})
+            + {formatSlotRange(nextSlot, addOneHourStr(nextSlot))} (₱{getSlotPrice(nextSlot, b.booking_date, eventBooking)})
           </button>
         )}
         {!hasAnyOption && (

@@ -14,12 +14,15 @@ const TIME_SLOTS = [
 
 // Flat rate: ₱200/hr, every day of the week, 5AM-12AM. There's no more
 // weekday/weekend or peak/off-peak split — every slot in TIME_SLOTS costs
-// the same.
+// the same, EXCEPT parties/events/gatherings, which are ₱250/hr instead.
 const HOURLY_PRICE = 200
+const EVENT_PRICE = 250
 const HOLD_MINUTES = 3
 
-function getSlotPrice(slot: string, dateStr: string) {
-  return HOURLY_PRICE
+type BookingType = 'regular' | 'event'
+
+function getSlotPrice(slot: string, dateStr: string, bookingType: BookingType) {
+  return bookingType === 'event' ? EVENT_PRICE : HOURLY_PRICE
 }
 
 function formatHour(time: string) {
@@ -94,17 +97,25 @@ const [phoneError, setPhoneError] = useState('')
   const [error, setError] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [poppedSlot, setPoppedSlot] = useState<string | null>(null)
+  // Asked in Step 1, required before moving to Step 2 — null (not yet
+  // answered) is intentional so the customer has to make an explicit choice
+  // rather than silently defaulting to the cheaper "regular" rate.
+  const [bookingType, setBookingType] = useState<BookingType | null>(null)
   const [confirmedBooking, setConfirmedBooking] = useState<{
     date: string
     slots: string[]
     total: number
     phone: string
     email: string
+    bookingType: BookingType
   } | null>(null)
 
   const [holdExpiresAt, setHoldExpiresAt] = useState<number | null>(null)
 
-  const totalAmount = selectedSlots.reduce((sum, slot) => sum + getSlotPrice(slot, bookingDate), 0)
+  const totalAmount = selectedSlots.reduce(
+    (sum, slot) => sum + getSlotPrice(slot, bookingDate, bookingType ?? 'regular'),
+    0
+  )
 
   const today = getLocalDateString()
   const isBookingToday = bookingDate === today
@@ -343,6 +354,11 @@ setOpenPlaySlots(openPlayHours)
 }
 setPhoneError('')
 
+  if (!bookingType) {
+    setError('Please let us know if this is a regular play or a party/event/gathering.')
+    return
+  }
+
   setCheckingEmail(true)
   
   setError('')
@@ -477,6 +493,7 @@ setPhoneError('')
       total: totalAmount,
       phone,
       email,
+      bookingType: bookingType ?? 'regular',
     })
 
     const rows = selectedSlots.map((slot) => ({
@@ -489,7 +506,7 @@ setPhoneError('')
       end_time: addOneHour(slot),
       status: 'pending',
       proof_url: urlData.publicUrl,
-      amount: getSlotPrice(slot, bookingDate),
+      amount: getSlotPrice(slot, bookingDate, bookingType ?? 'regular'),
     }))
 
     const { error: insertError } = await supabase.from('bookings').insert(rows)
@@ -570,7 +587,8 @@ function suggestEmailCorrection(email: string): string | null {
         </div>
         <h2 className="text-xl font-bold text-[#F1F2ED] mb-2">Booking Received</h2>
         <p className="text-[#B9C3BC] text-sm">
-          We've received your booking for <strong className="text-[#F1F2ED]">{confirmedBooking.date}</strong> at{' '}
+          We've received your {confirmedBooking.bookingType === 'event' ? 'party/event ' : ''}booking for{' '}
+          <strong className="text-[#F1F2ED]">{confirmedBooking.date}</strong> at{' '}
           <strong className="text-[#F1F2ED]">{confirmedBooking.slots.map(formatSlotRange).join(', ')}</strong> — total{' '}
           <strong className="text-[#F1F2ED]">₱{confirmedBooking.total}</strong>. We'll verify your payment and confirm
           shortly — you'll be contacted at <strong className="text-[#F1F2ED]">{confirmedBooking.phone}</strong> or{' '}
@@ -676,12 +694,52 @@ function suggestEmailCorrection(email: string): string | null {
              </div>
               {phoneError && <p className="text-red-400 text-xs mt-1">{phoneError}</p>}
             </div>
-            
+
+            <div className="animate-fade-up" style={{ animationDelay: '0.22s' }}>
+              <label className="block text-sm font-medium text-[#B9C3BC] mb-2">
+                Is this a regular play or a party/event/gathering?
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBookingType('regular')
+                    setError('')
+                  }}
+                  className={`py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                    bookingType === 'regular'
+                      ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
+                      : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60'
+                  }`}
+                >
+                  Regular Play
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBookingType('event')
+                    setError('')
+                  }}
+                  className={`py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                    bookingType === 'event'
+                      ? 'bg-[#9ED9B0] text-[#13291F] border-[#9ED9B0] shadow-md'
+                      : 'bg-white/5 text-[#D7DAD4] border-white/15 hover:border-[#9ED9B0]/60'
+                  }`}
+                >
+                  Party / Event
+                </button>
+              </div>
+              <p className="text-xs text-[#8A948E] mt-2">
+                {bookingType === 'event'
+                  ? `Party/event bookings are ₱${EVENT_PRICE}/hr instead of the regular ₱${HOURLY_PRICE}/hr.`
+                  : `Regular play is ₱${HOURLY_PRICE}/hr. Parties/events/gatherings are ₱${EVENT_PRICE}/hr.`}
+              </p>
+            </div>
 
             <button
             
   type="submit"
-  disabled={checkingEmail}
+  disabled={checkingEmail || !bookingType}
   className={`w-full bg-[#9ED9B0] text-[#13291F] font-semibold py-2.5 rounded-full hover:bg-[#8bcda0] active:scale-95 transition-all animate-fade-up disabled:opacity-60 ${primaryBtnGlow}`}
   style={{ animationDelay: '0.26s' }}
 >
@@ -694,7 +752,10 @@ function suggestEmailCorrection(email: string): string | null {
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#F1F2ED]">Choose Your Times</h2>
             <p className="text-xs text-[#8A948E] -mt-3">
-              You can select more than one hour. Flat ₱{HOURLY_PRICE}/hr, every day, 5AM–12AM.
+              You can select more than one hour.{' '}
+              {bookingType === 'event'
+                ? `Party/event rate: ₱${EVENT_PRICE}/hr, every day, 5AM–12AM.`
+                : `Flat ₱${HOURLY_PRICE}/hr, every day, 5AM–12AM.`}
             </p>
             <p className="text-xs text-[#8A948E] -mt-2 flex items-center gap-1">
               <Lock className="w-3 h-3" /> Selected slots are held for {HOLD_MINUTES} minutes.
@@ -791,7 +852,7 @@ const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
     ? (blockedInfo[slot] ?? 'Blocked')
     : isHeld
     ? 'Held'
-    : `₱${getSlotPrice(slot, bookingDate)}`}
+    : `₱${getSlotPrice(slot, bookingDate, bookingType ?? 'regular')}`}
 </span>
                         </button>
                       )
