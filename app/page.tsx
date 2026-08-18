@@ -39,6 +39,14 @@ function getLocalDateString(date: Date = new Date()) {
   return `${year}-${month}-${day}`
 }
 
+// Short display label for a date picked in the schedule viewer, e.g. "Aug 20".
+function formatDateLabel(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -119,21 +127,40 @@ function formatSlotRange(time: string) {
 type SlotStatus = 'available' | 'booked' | 'past' | 'blocked' | 'openplay'
 
 function TodayAvailability() {
-  const [today, setToday] = useState(() => getLocalDateString())
+  // `actualToday` tracks the real current date and rolls over automatically
+  // (see the interval effect below). `selectedDate` is whatever date the
+  // schedule is showing — it starts out following actualToday, but once the
+  // customer manually picks a different date, it stops auto-following so
+  // browsing tomorrow's slots doesn't get yanked back to today at midnight.
+  const [actualToday, setActualToday] = useState(() => getLocalDateString())
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString())
+  const [followingToday, setFollowingToday] = useState(true)
+
   const [loading, setLoading] = useState(true)
   const [slotStatuses, setSlotStatuses] = useState<{ slot: string; status: SlotStatus }[]>([])
   const [showSchedule, setShowSchedule] = useState(false)
 
-  // Keep "today" correct even if the tab is left open across local midnight —
-  // otherwise a visitor browsing at 11:59 PM would keep seeing yesterday's
-  // slot list until they refresh.
+  // Keep "actualToday" correct even if the tab is left open across local
+  // midnight — otherwise a visitor browsing at 11:59 PM would keep seeing
+  // yesterday's date until they refresh.
   useEffect(() => {
     const interval = setInterval(() => {
       const current = getLocalDateString()
-      setToday((prev) => (prev === current ? prev : current))
+      setActualToday((prev) => (prev === current ? prev : current))
     }, 60 * 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // If the customer hasn't manually picked a date, keep the view pinned to
+  // whatever day it actually is (so it still rolls over at midnight).
+  useEffect(() => {
+    if (followingToday) setSelectedDate(actualToday)
+  }, [actualToday, followingToday])
+
+  function handleDateChange(newDate: string) {
+    setSelectedDate(newDate)
+    setFollowingToday(newDate === actualToday)
+  }
 
   useEffect(() => {
   let cancelled = false
@@ -162,16 +189,16 @@ function TodayAvailability() {
     supabase
       .from('bookings')
       .select('start_time')
-      .eq('booking_date', today)
+      .eq('booking_date', selectedDate)
       .neq('status', 'cancelled'),
     supabase
       .from('blocked_slots')
       .select('start_time, end_time')
-      .eq('booking_date', today),
+      .eq('booking_date', selectedDate),
     supabase
       .from('open_play_sessions')
       .select('start_time, end_time')
-      .eq('session_date', today)
+      .eq('session_date', selectedDate)
       .eq('status', 'active'),
   ]).then(([bookingsRes, blockedRes, openPlayRes]) => {
     if (cancelled) return
@@ -189,7 +216,7 @@ function TodayAvailability() {
     })
 
     const now = new Date()
-    const isViewingToday = getLocalDateString(now) === today
+    const isViewingToday = getLocalDateString(now) === selectedDate
     const currentHour = now.getHours()
 
     const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
@@ -208,9 +235,10 @@ function TodayAvailability() {
   return () => {
     cancelled = true
   }
-}, [today])
+}, [selectedDate])
 
   const availableCount = slotStatuses.filter((s) => s.status === 'available').length
+  const isViewingToday = selectedDate === actualToday
 
   return (
     <div className="w-full max-w-sm bg-gradient-to-b from-[#16332570] to-[#0F211A]/60 backdrop-blur-md rounded-2xl p-6 border border-[#9ED9B0]/25 shadow-[0_0_40px_-8px_rgba(158,217,176,0.35),0_20px_50px_-15px_rgba(0,0,0,0.6)]">
@@ -230,13 +258,15 @@ function TodayAvailability() {
         </div>
         <div>
           {loading ? (
-            <p className="text-sm text-[#8A948E]">Checking today's slots...</p>
+            <p className="text-sm text-[#8A948E]">Checking slot availability...</p>
           ) : (
             <>
               <p className={`${bebas.className} text-2xl text-[#F1F2ED] leading-none`}>
                 {availableCount} slot{availableCount === 1 ? '' : 's'} open
               </p>
-              <p className="text-xs text-[#8A948E] mt-1">Available today</p>
+              <p className="text-xs text-[#8A948E] mt-1">
+                Available {isViewingToday ? 'today' : `on ${formatDateLabel(selectedDate)}`}
+              </p>
             </>
           )}
         </div>
@@ -249,28 +279,49 @@ function TodayAvailability() {
             onClick={() => setShowSchedule((v) => !v)}
             className="w-full flex items-center justify-between text-xs uppercase tracking-wide text-[#8FB39B] hover:text-[#9ED9B0] transition-colors py-1"
           >
-            <span>{showSchedule ? 'Hide' : 'View'} Today's Schedule</span>
+            <span>{showSchedule ? 'Hide' : 'View'} Schedule</span>
             <ChevronDown
               className={`w-4 h-4 transition-transform duration-300 ${showSchedule ? 'rotate-180' : ''}`}
             />
           </button>
 
           {showSchedule && (
-            <div className="flex flex-wrap gap-2 mt-3 animate-fade-up">
-              {slotStatuses.map(({ slot, status }) => (
-                <span
-                  key={slot}
-                  className={`rounded-full border px-3 py-1 text-xs ${
-                    status === 'available'
-                      ? 'bg-green-500/10 border-green-500/30 text-[#9ED9B0]'
-                      : status === 'booked'
-                      ? 'bg-red-500/10 border-red-500/30 text-red-300 line-through'
-                      : 'bg-white/5 border-white/10 text-[#5A645E]'
-                  }`}
-                >
-                  {formatSlotRange(slot)}
-                </span>
-              ))}
+            <div className="mt-3 animate-fade-up">
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="date"
+                  min={actualToday}
+                  value={selectedDate}
+                  onChange={(e) => handleDateChange(e.target.value)}
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] text-xs [color-scheme:dark] outline-none focus:border-[#9ED9B0]"
+                />
+                {!isViewingToday && (
+                  <button
+                    type="button"
+                    onClick={() => handleDateChange(actualToday)}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] text-xs font-medium transition-colors"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {slotStatuses.map(({ slot, status }) => (
+                  <span
+                    key={slot}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      status === 'available'
+                        ? 'bg-green-500/10 border-green-500/30 text-[#9ED9B0]'
+                        : status === 'booked'
+                        ? 'bg-red-500/10 border-red-500/30 text-red-300 line-through'
+                        : 'bg-white/5 border-white/10 text-[#5A645E]'
+                    }`}
+                  >
+                    {formatSlotRange(slot)}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>

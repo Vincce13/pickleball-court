@@ -231,7 +231,6 @@ export default function AdminDashboard() {
   const [extendOpenKey, setExtendOpenKey] = useState<string | null>(null)
   const [newDate, setNewDate] = useState('')
   const [newStartTime, setNewStartTime] = useState('')
-  const [newEndTime, setNewEndTime] = useState('')
   const [submittingReschedule, setSubmittingReschedule] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
@@ -394,11 +393,10 @@ export default function AdminDashboard() {
     setRescheduleOpenKey(key)
     setNewDate('')
     setNewStartTime('')
-    setNewEndTime('')
   }
 
   async function submitReschedule(booking: GroupedBooking) {
-    if (!newDate || !newStartTime || !newEndTime) return
+    if (!newDate || !newStartTime) return
 
     setSubmittingReschedule(true)
 
@@ -415,19 +413,29 @@ export default function AdminDashboard() {
         body: JSON.stringify({
           ids: booking.ids,
           bookingDate: newDate,
+          // Only a single new start time is sent — the API derives how many
+          // consecutive 1-hour slots to create from ids.length (i.e. however
+          // many hours the original booking had), so a 2-hour booking
+          // correctly becomes e.g. 6PM-7PM + 7PM-8PM instead of both rows
+          // getting the same 6PM-8PM range.
           startTime: newStartTime,
-          endTime: newEndTime,
         }),
       })
 
+      const data = await res.json().catch(() => ({}))
+
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
         setToast({
           message: data.error ?? 'Unable to reschedule booking.',
           type: 'error',
         })
         return
       }
+
+      // Use the actual per-slot times the API computed and saved, rather
+      // than re-deriving them here — keeps the confirmation email in sync
+      // with what's really in the database.
+      const newSlots: { start: string; end: string }[] = data.slots ?? []
 
       const emailRes = await fetch('/api/notify', {
         method: 'POST',
@@ -436,7 +444,7 @@ export default function AdminDashboard() {
           email: booking.email,
           name: booking.name,
           bookingDate: newDate,
-          slots: [{ start: newStartTime, end: newEndTime }],
+          slots: newSlots,
           totalAmount: booking.totalAmount,
           status: 'rescheduled',
           oldDate,
@@ -1126,11 +1134,29 @@ async function finishOpenPlaySession(sessionId: number) {
                     </div>
                   )}
 
-                    {rescheduleOpenKey === b.key && (
+                    {rescheduleOpenKey === b.key && (() => {
+  // The number of hours is fixed by the original booking — the admin only
+  // picks a new start time, and consecutive 1-hour slots are generated from
+  // there, both here (for preview) and on the server (for the actual save).
+  // This mirrors the same logic used in the API route so the preview never
+  // drifts from what's actually saved.
+  const hourCount = b.slots.length
+  const previewSlots: string[] = []
+  if (newStartTime) {
+    let current = newStartTime
+    for (let i = 0; i < hourCount; i++) {
+      const end = addOneHourStr(current)
+      previewSlots.push(formatSlotRange(current, end))
+      current = end
+    }
+  }
+
+  return (
   <div className="w-full bg-white/5 border border-amber-400/30 rounded-lg p-4 space-y-4">
 
     <p className="text-sm text-[#B9C3BC]">
-      Select the new booking schedule.
+      Select the new date and start time. This booking is {hourCount} hour{hourCount > 1 ? 's' : ''} long —
+      the remaining slots will be filled in consecutively from your chosen start time.
     </p>
 
     <div>
@@ -1146,42 +1172,32 @@ async function finishOpenPlaySession(sessionId: number) {
       />
     </div>
 
-    <div className="grid grid-cols-2 gap-3">
+    <div>
+      <label className="block text-xs mb-1 text-[#8A948E]">
+        New Start Time
+      </label>
 
-      <div>
-        <label className="block text-xs mb-1 text-[#8A948E]">
-          Start
-        </label>
-
-        <input
-          type="time"
-          value={newStartTime}
-          onChange={(e) => setNewStartTime(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs mb-1 text-[#8A948E]">
-          End
-        </label>
-
-        <input
-          type="time"
-          value={newEndTime}
-          onChange={(e) => setNewEndTime(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
-        />
-      </div>
-
+      <input
+        type="time"
+        value={newStartTime}
+        onChange={(e) => setNewStartTime(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 [color-scheme:dark]"
+      />
     </div>
+
+    {previewSlots.length > 0 && (
+      <div className="bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+        <p className="text-xs text-[#8A948E] mb-1">New schedule</p>
+        <p className="text-sm font-medium text-amber-300">{previewSlots.join(', ')}</p>
+      </div>
+    )}
 
     <div className="flex gap-2">
 
       <button
         onClick={() => submitReschedule(b)}
-        disabled={submittingReschedule}
-        className="flex-1 bg-amber-400 text-[#13291F] rounded-full py-2 font-semibold"
+        disabled={submittingReschedule || !newDate || !newStartTime}
+        className="flex-1 bg-amber-400 text-[#13291F] rounded-full py-2 font-semibold disabled:opacity-50"
       >
         {submittingReschedule
           ? 'Saving...'
@@ -1198,7 +1214,8 @@ async function finishOpenPlaySession(sessionId: number) {
     </div>
 
   </div>
-)}
+  )
+})()}
 
                 {extendOpenKey === b.key && (() => {
   const nextSlot = getExtensionOption(b)

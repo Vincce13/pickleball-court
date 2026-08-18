@@ -17,7 +17,7 @@ const TIME_SLOTS = [
 // the same, EXCEPT parties/events/gatherings, which are ₱250/hr instead.
 const HOURLY_PRICE = 200
 const EVENT_PRICE = 250
-const HOLD_MINUTES = 3
+const HOLD_MINUTES = 5
 
 type BookingType = 'regular' | 'event'
 
@@ -298,7 +298,7 @@ setOpenPlaySlots(openPlayHours)
     setProofFile(null)
     setProofPreview(null)
     setError('')
-    setHoldError('Your held slots expired after 3 minutes. Please choose your time again.')
+    setHoldError(`Your held slots expired after ${HOLD_MINUTES} minutes. Please choose your time again.`)
     setStep(1)
   }
 
