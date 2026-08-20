@@ -16,8 +16,8 @@ const TIME_SLOTS = [
   
 ]
 
-const COURT_LAT = 10.164494873134052
-const COURT_LNG = 123.71060339015708
+const COURT_LAT = 10.164887333823948
+const COURT_LNG = 123.71027420056626
 const COURT_ADDRESS = 'Purok Sampaguita, North Poblacion, San Fernando, Cebu'
 
 function formatHour(time: string) {

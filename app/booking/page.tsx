@@ -3,10 +3,16 @@
 import Link from 'next/link'
 import { Bebas_Neue } from 'next/font/google'
 import BookingForm from '@/components/BookingForm'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 const bebas = Bebas_Neue({ weight: '400', subsets: ['latin'] })
 
 export default function BookingPage() {
+
+  const router = useRouter()
+const [releaseHolds, setReleaseHolds] = useState<(() => Promise<void>) | null>(null)
+
   return (
     <main className="relative min-h-[100dvh] text-[#F1F2ED] overflow-x-hidden bg-[#13291F]">
       {/* Static ambient background, no video */}
@@ -24,12 +30,15 @@ export default function BookingPage() {
             TDA COURT
           </span>
         </Link>
-        <Link
-          href="/"
-          className="text-xs sm:text-sm text-[#D7DAD4] hover:text-[#9ED9B0] transition-colors"
-        >
-          ← Back Home
-        </Link>
+        <button
+  onClick={async () => {
+    if (releaseHolds) await releaseHolds()
+    router.push('/')
+  }}
+  className="text-xs sm:text-sm text-[#D7DAD4] hover:text-[#9ED9B0] transition-colors"
+>
+  ← Back Home
+</button>
       </nav>
 
       <div className="relative z-10 px-4 sm:px-6 pt-28 pb-16 sm:pt-32 sm:pb-24">
@@ -44,7 +53,7 @@ export default function BookingPage() {
           </p>
         </div>
 
-        <BookingForm />
+       <BookingForm onNavigateAway={(release) => setReleaseHolds(() => release)} />
       </div>
     </main>
   )

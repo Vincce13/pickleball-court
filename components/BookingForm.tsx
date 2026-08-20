@@ -25,6 +25,24 @@ function getSlotPrice(slot: string, dateStr: string, bookingType: BookingType) {
   return bookingType === 'event' ? EVENT_PRICE : HOURLY_PRICE
 }
 
+const SESSION_ID_KEY = 'tda_booking_session_id'
+
+// Stable per-tab session id, persisted across refreshes. Previously this was
+// `useRef(crypto.randomUUID()).current`, which mints a brand-new random id
+// on every page load. Kept persisted here even though the flow no longer
+// resumes across a refresh — it's what lets a customer's OWN still-active
+// hold be correctly recognized and reclaimed in the rare case the
+// release-on-unload paths below don't get to complete before a hold's TTL
+// would otherwise block them.
+function getOrCreateSessionId() {
+  if (typeof window === 'undefined') return crypto.randomUUID()
+  const existing = window.sessionStorage.getItem(SESSION_ID_KEY)
+  if (existing) return existing
+  const id = crypto.randomUUID()
+  window.sessionStorage.setItem(SESSION_ID_KEY, id)
+  return id
+}
+
 function formatHour(time: string) {
   const [h] = time.split(':').map(Number)
   const period = h >= 12 ? 'PM' : 'AM'
@@ -71,9 +89,9 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
 }
 
-export default function BookingForm() {
+export default function BookingForm({ onNavigateAway }: { onNavigateAway?: (release: () => Promise<void>) => void }) {
   const [step, setStep] = useState(1)
-  const sessionId = useRef(crypto.randomUUID()).current
+  const [sessionId] = useState(getOrCreateSessionId)
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -127,12 +145,33 @@ const [phoneError, setPhoneError] = useState('')
     return slotHour < new Date().getHours()
   }
 
+  // Re-fetches the currently active holds for `bookingDate` and rebuilds
+  // heldByOthers from scratch. Used both for the initial/date-change load
+  // below AND as the realtime refresh trigger — refetching rather than
+  // patching state from a postgres_changes payload sidesteps needing
+  // REPLICA IDENTITY FULL on slot_holds, and correctly handles UPDATE (a
+  // reclaimed hold) too, not just INSERT/DELETE.
+  async function refreshHeldSlots() {
+    const { data: holdsData } = await supabase
+      .from('slot_holds')
+      .select('start_time, session_id, expires_at')
+      .eq('booking_date', bookingDate)
+      .gt('expires_at', new Date().toISOString())
+
+    setHeldByOthers(
+      (holdsData ?? [])
+        .filter((h) => h.session_id !== sessionId)
+        .map((h) => h.start_time.slice(0, 5))
+    )
+  }
+
   // Fetch actual bookings + active holds whenever the date changes
-  useEffect(() => {
-    if (!bookingDate) return
-    setLoadingSlots(true)
-    setSelectedSlots([])
-    setConflictNotice(null)
+useEffect(() => {
+  if (!bookingDate) return
+  setLoadingSlots(true)
+  setConflictNotice(null)
+  setHeldByOthers([])
+  setSelectedSlots([])
 
     async function load() {
       const { data: bookingsData } = await supabase
@@ -140,12 +179,6 @@ const [phoneError, setPhoneError] = useState('')
         .select('start_time')
         .eq('booking_date', bookingDate)
         .neq('status', 'cancelled')
-
-      const { data: holdsData } = await supabase
-        .from('slot_holds')
-        .select('start_time, session_id, expires_at')
-        .eq('booking_date', bookingDate)
-        .gt('expires_at', new Date().toISOString())
 
      const { data: blockedData } = await supabase
   .from('blocked_slots')
@@ -195,11 +228,7 @@ setBlockedInfo(reasonMap)
 })
 setOpenPlaySlots(openPlayHours)
 
-      setHeldByOthers(
-        (holdsData ?? [])
-          .filter((h) => h.session_id !== sessionId)
-          .map((h) => h.start_time.slice(0, 5))
-      )
+      await refreshHeldSlots()
       setLoadingSlots(false)
     }
 
@@ -229,20 +258,19 @@ setOpenPlaySlots(openPlayHours)
         }
       )
       .on(
+        // A single wildcard listener rather than separate INSERT/DELETE
+        // handlers: INSERT (new hold), UPDATE (a hold reclaimed via
+        // tryHoldSlot's fallback path), and DELETE (released/expired hold)
+        // all just trigger a fresh refetch instead of trying to patch state
+        // from the event payload. DELETE payloads only include `start_time`
+        // in `payload.old` if the table has REPLICA IDENTITY FULL set,
+        // which isn't something this client code can guarantee — refetching
+        // sidesteps that entirely, and also picks up reclaimed (UPDATE)
+        // holds, which a plain INSERT/DELETE-only subscription would miss.
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'slot_holds', filter: `booking_date=eq.${bookingDate}` },
-        (payload) => {
-          if (payload.new.session_id === sessionId) return
-          const slot = (payload.new.start_time as string).slice(0, 5)
-          setHeldByOthers((prev) => (prev.includes(slot) ? prev : [...prev, slot]))
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'slot_holds', filter: `booking_date=eq.${bookingDate}` },
-        (payload) => {
-          const slot = (payload.old.start_time as string).slice(0, 5)
-          setHeldByOthers((prev) => prev.filter((s) => s !== slot))
+        { event: '*', schema: 'public', table: 'slot_holds', filter: `booking_date=eq.${bookingDate}` },
+        () => {
+          refreshHeldSlots()
         }
       )
       .subscribe()
@@ -252,18 +280,37 @@ setOpenPlaySlots(openPlayHours)
     }
   }, [bookingDate, sessionId])
 
-  // Release all of this session's holds when leaving the page/tab
+  // Release all of this session's holds when leaving the page/tab via an
+  // actual browser-level unload (closing the tab, refreshing, typing a new
+  // URL). `fetch` with `keepalive: true` is used rather than
+  // `navigator.sendBeacon(...)` — sendBeacon can only send a POST with no
+  // custom headers, and Supabase's REST API requires `apikey`/`Authorization`
+  // headers plus an actual DELETE method, so sendBeacon could never actually
+  // delete anything here.
+  //
+  // NOTE: `beforeunload` does NOT fire for client-side route changes within
+  // the app (e.g. clicking a "Home" link/button) — the page never actually
+  // unloads for those, it's just React unmounting this component. That case
+  // is covered separately below by the plain component-unmount effect.
   useEffect(() => {
     function releaseOnUnload() {
-      navigator.sendBeacon?.(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/slot_holds?session_id=eq.${sessionId}`,
-      )
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      if (!anonKey || !supabaseUrl) return
+      fetch(`${supabaseUrl}/rest/v1/slot_holds?session_id=eq.${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+        },
+        keepalive: true,
+      }).catch(() => {})
     }
     window.addEventListener('beforeunload', releaseOnUnload)
     return () => window.removeEventListener('beforeunload', releaseOnUnload)
   }, [sessionId])
 
-  // Silent auto-reset: checks once a second whether the 3-minute hold window has expired
+  // Silent auto-reset: checks once a second whether the hold window has expired
   useEffect(() => {
     if (!holdExpiresAt) return
 
@@ -290,6 +337,25 @@ setOpenPlaySlots(openPlayHours)
     await supabase.from('slot_holds').delete().eq('session_id', sessionId)
   }
 
+  // Hands the release function up to a parent that wants to call it BEFORE
+  // navigating away (e.g. a "Home" link that awaits this, then routes) — but
+  // that only works if the parent is actually wired to call it, which this
+  // component has no way to guarantee.
+  useEffect(() => {
+    onNavigateAway?.(releaseAllMyHolds)
+  }, [])
+
+  // This is the part that actually fixes "click Home while on Step 2/3
+  // leaves the schedule held": a plain unmount cleanup fires no matter WHY
+  // BookingForm unmounts — including a client-side route change to another
+  // page — unlike `beforeunload` above, which only fires on a real page
+  // unload. This doesn't depend on any parent component cooperating.
+  useEffect(() => {
+    return () => {
+      releaseAllMyHolds()
+    }
+  }, [])
+
   async function resetBookingFlow() {
     await releaseAllMyHolds()
     setSelectedSlots([])
@@ -303,35 +369,41 @@ setOpenPlaySlots(openPlayHours)
   }
 
   async function tryHoldSlot(slot: string): Promise<boolean> {
-    const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000).toISOString()
+  const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000).toISOString()
 
-    const { error: insertErr } = await supabase.from('slot_holds').insert({
-      booking_date: bookingDate,
-      start_time: slot,
-      session_id: sessionId,
-      expires_at: expiresAt,
-    })
+  const { error: insertErr } = await supabase.from('slot_holds').insert({
+    booking_date: bookingDate,
+    start_time: slot,
+    session_id: sessionId,
+    expires_at: expiresAt,
+  })
 
-    if (!insertErr) return true
+  if (!insertErr) return true
 
-    const { data: existing } = await supabase
+  const { data: existing } = await supabase
+    .from('slot_holds')
+    .select('session_id, expires_at')
+    .eq('booking_date', bookingDate)
+    .eq('start_time', slot)
+    .single()
+
+  // Either it's already expired, OR it's actually this same customer's own
+  // leftover hold (e.g. from clicking Back before the delete fully synced) —
+  // in both cases, it's safe to take over rather than block them.
+  const isMine = existing?.session_id === sessionId
+  const isExpired = existing && new Date(existing.expires_at) < new Date()
+
+  if (existing && (isMine || isExpired)) {
+    await supabase
       .from('slot_holds')
-      .select('session_id, expires_at')
+      .update({ session_id: sessionId, expires_at: expiresAt })
       .eq('booking_date', bookingDate)
       .eq('start_time', slot)
-      .single()
-
-    if (existing && new Date(existing.expires_at) < new Date()) {
-      await supabase
-        .from('slot_holds')
-        .update({ session_id: sessionId, expires_at: expiresAt })
-        .eq('booking_date', bookingDate)
-        .eq('start_time', slot)
-      return true
-    }
-
-    return false
+    return true
   }
+
+  return false
+}
 
  async function goToStep2(e: React.FormEvent) {
   e.preventDefault()
@@ -655,6 +727,7 @@ function suggestEmailCorrection(email: string): string | null {
   className={inputClass}
 />
               </div>
+              <p className="text-xs text-[#8A948E] mt-1">We'll send your reservation confirmation here.</p>
             </div>
             {error && <p className="text-red-400 text-xs -mt-2">{error}</p>}
             {emailSuggestion && (
@@ -800,13 +873,18 @@ function suggestEmailCorrection(email: string): string | null {
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {TIME_SLOTS.map((slot) => {
-                      const isTaken = takenSlots.includes(slot)
-const isHeld = heldByOthers.includes(slot)
+const isTaken = takenSlots.includes(slot)
 const isBlocked = blockedSlots.includes(slot)
 const isOpenPlay = openPlaySlots.includes(slot)
+const isSelected = selectedSlots.includes(slot)
+
+// A slot the customer has already selected themselves must NEVER be
+// treated as "held by someone else" — otherwise a refresh-restore race
+// condition (heldByOthers loading before/after selectedSlots) can trap
+// them on a slot they can't click to deselect.
+const isHeld = heldByOthers.includes(slot) && !isSelected
 
 const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
-                      const isSelected = selectedSlots.includes(slot)
                       const isPopped = poppedSlot === slot
                       return (
                         <button
@@ -870,9 +948,19 @@ const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
             )}
 
             <div className="flex gap-3 pt-2">
-              <button type="button" onClick={() => setStep(1)} className="flex-1 border border-[#9ED9B0]/30 text-[#9ED9B0] font-semibold py-2.5 rounded-full hover:bg-[#9ED9B0]/10 active:scale-95 transition-all">
-                Back
-              </button>
+              <button
+  type="button"
+  onClick={async () => {
+    await releaseAllMyHolds()
+    setSelectedSlots([])
+    setBookingDate('')
+    setHoldExpiresAt(null)
+    setStep(1)
+  }}
+  className="flex-1 border border-[#9ED9B0]/30 text-[#9ED9B0] font-semibold py-2.5 rounded-full hover:bg-[#9ED9B0]/10 active:scale-95 transition-all"
+>
+  Back
+</button>
               <button
                 type="button"
                 disabled={!bookingDate || selectedSlots.length === 0}
@@ -891,7 +979,7 @@ const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
             <p className="text-sm text-[#B9C3BC]">
               {bookingDate} — {selectedSlots.map(formatSlotRange).join(', ')}
               <br />
-              Scan the QR code below to complete payment.
+              Scan the QR code or take a screenshot and upload it your gcash app below to complete payment.
             </p>
 
             {conflictNotice && (
