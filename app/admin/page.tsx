@@ -795,53 +795,52 @@ async function finishOpenPlaySession(sessionId: number) {
   return (
     <main className="min-h-[100dvh] bg-[#13291F] text-[#F1F2ED] px-2 sm:px-6 lg:px-8 py-6">
       <div className="w-full max-w-7xl mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold">Bookings Dashboard</h1>
 
-          <div className="grid grid-cols-2 sm:flex gap-3 w-full sm:w-auto">
-            <button
-              onClick={() => setReportOpen(true)}
-              className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] transition-colors"
-            >
-              <BarChart3 className="w-4 h-4" />
-              Report
-            </button>
-
-            <button
-              onClick={() => setBlockOpen(true)}
-              className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 transition-colors"
-            >
-              <Ban className="w-4 h-4" />
-              Block Slot
-            </button>
-
-            <button
-             onClick={() => setScheduleOpen(true)}
-             className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg-lg bg-blue-400/10 hover:bg-blue-400/20 text-blue-300 transition-colors"
-            >
-            <CalendarSearch className="w-4 h-4" />
-             Schedule
-            </button>
-
-
-            <button
-  onClick={() => setOpenPlayModalOpen(true)}
-  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 text-purple-300 transition-colors"
->
-  <Users2 className="w-4 h-4" />
-  Open Play
-</button>
-
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              Log Out
-            </button>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-sm text-[#B9C3BC] hover:text-[#F1F2ED] transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Log Out
+          </button>
         </div>
 
+        <div className="grid grid-cols-2 sm:flex gap-3 w-full sm:w-auto mb-8">
+          <button
+            onClick={() => setReportOpen(true)}
+            className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] transition-colors"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Report
+          </button>
+
+          <button
+            onClick={() => setBlockOpen(true)}
+            className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 transition-colors"
+          >
+            <Ban className="w-4 h-4" />
+            Block Slot
+          </button>
+
+          <button
+            onClick={() => setScheduleOpen(true)}
+            className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg bg-blue-400/10 hover:bg-blue-400/20 text-blue-300 transition-colors"
+          >
+            <CalendarSearch className="w-4 h-4" />
+            Schedule
+          </button>
+
+          <button
+            onClick={() => setOpenPlayModalOpen(true)}
+            className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 rounded-lg bg-purple-400/10 hover:bg-purple-400/20 text-purple-300 transition-colors"
+          >
+            <Users2 className="w-4 h-4" />
+            Open Play
+          </button>
+        </div>
+        
         <div className="mb-4">
   <input
     type="text"
