@@ -79,6 +79,17 @@ function toMinutes(time: string) {
   return h * 60 + m
 }
 
+// Returns today's date as "YYYY-MM-DD" using the browser's LOCAL calendar
+// date, not UTC. `new Date().toISOString()` always returns UTC, so for PH
+// users (UTC+8) it kept reporting "yesterday" for the first 8 hours after
+// local midnight — that's why the TODAY badge felt like it was firing late.
+function getLocalDateString(date: Date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // Whether a given hourly slot's start time falls inside a [rangeStart, rangeEnd)
 // window. Used by the Day Schedule modal so that a single block/booking/open-play
 // row spanning MULTIPLE hours (e.g. 06:00-08:00) correctly lights up every hourly
@@ -215,12 +226,36 @@ function groupBookings(bookings: Booking[]): GroupedBooking[] {
 export default function AdminDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'refunded'>('pending')
+  const [filter, setFilter] = useState<'pending' | 'confirmed' | 'cancelled' | 'completed' | 'refunded'>('pending')
   const [search, setSearch] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [updatingKey, setUpdatingKey] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const today = new Date().toISOString().split('T')[0]
+
+  // `today` is now state, seeded from the LOCAL date (see getLocalDateString
+  // above) instead of UTC. A useEffect below schedules a timer that fires
+  // exactly at the next local midnight and updates this — so the TODAY
+  // badge (and the "needs completion" badge) flip over on their own, with
+  // no page refresh or other user action required.
+  const [today, setToday] = useState(() => getLocalDateString())
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+
+    function scheduleMidnightUpdate() {
+      const now = new Date()
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0)
+      const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+
+      timer = setTimeout(() => {
+        setToday(getLocalDateString())
+        scheduleMidnightUpdate() // reschedule for the following midnight
+      }, msUntilMidnight)
+    }
+
+    scheduleMidnightUpdate()
+    return () => clearTimeout(timer)
+  }, [])
 
   const [refundOpenKey, setRefundOpenKey] = useState<string | null>(null)
   const [rainStartInput, setRainStartInput] = useState('')
@@ -244,7 +279,7 @@ export default function AdminDashboard() {
 
   // --- Schedule modal state (moved inside the component — this was the bug) ---
   const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0])
+  const [scheduleDate, setScheduleDate] = useState(() => getLocalDateString())
   const [scheduleData, setScheduleData] = useState<{
     bookings: { start_time: string; end_time: string; name: string; status: string }[]
     blocked: { start_time: string; end_time: string; reason: string }[]
@@ -614,12 +649,10 @@ const grouped = groupBookings(bookings)
 
 
 let filtered = grouped.filter((b) => {
-  const matchesFilter =
-    filter === 'all'
-      ? true
-      : filter === 'refunded'
-      ? b.status === 'refunded' || b.totalRefunded > 0
-      : b.status === filter
+ const matchesFilter =
+  filter === 'refunded'
+    ? b.status === 'refunded' || b.totalRefunded > 0
+    : b.status === filter
 
   const keyword = search.toLowerCase()
 
@@ -852,7 +885,7 @@ async function finishOpenPlaySession(sessionId: number) {
 </div>
 
         <div className="grid grid-cols-2 sm:flex gap-2 mb-6 w-full">
-          {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled', 'all'] as const).map((f) => (
+          {(['pending', 'confirmed', 'completed', 'refunded', 'cancelled'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -862,13 +895,12 @@ async function finishOpenPlaySession(sessionId: number) {
                   : 'bg-white/5 text-[#B9C3BC] hover:bg-white/10'
               }`}
             >
-              {f}{' '}
-              {f !== 'all' &&
-                `(${
-                  f === 'refunded'
-                    ? grouped.filter((b) => b.totalRefunded > 0).length
-                    : grouped.filter((b) => b.status === f).length
-                })`}
+             {f}{' '}
+             {`(${
+             f === 'refunded'
+             ? grouped.filter((b) => b.status === 'refunded' || b.totalRefunded > 0).length
+             : grouped.filter((b) => b.status === f).length
+             })`}
             </button>
           ))}
         </div>
@@ -899,13 +931,24 @@ async function finishOpenPlaySession(sessionId: number) {
                     >
                       <div className="self-start">
 
-  {(  (filter === 'confirmed' && b.booking_date === today) || isEventBooking(b)) && (
+  {(
+    (filter === 'confirmed' && b.booking_date === today) ||
+    (b.status === 'confirmed' && b.booking_date < today) ||
+    isEventBooking(b)
+  ) && (
     <div className="flex flex-wrap items-center gap-1.5 mb-2">
       {filter === 'confirmed' && b.booking_date === today && (
         <span className="inline-flex items-center rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
           📅 TODAY
         </span>
       )}
+
+      {b.status === 'confirmed' && b.booking_date < today && (
+        <span className="inline-flex items-center rounded-full bg-red-400/20 border border-red-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+          ⚠️ NEEDS COMPLETION
+        </span>
+      )}
+
       {isEventBooking(b) && (
         <span className="inline-flex items-center gap-1 rounded-full bg-purple-400/20 border border-purple-400/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-300">
           🎉 EVENT
