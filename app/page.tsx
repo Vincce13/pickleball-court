@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase'
 const bebas = Bebas_Neue({ weight: '400', subsets: ['latin'] })
 
 const TIME_SLOTS = [
-  '17:00',
+  '16:00', '17:00',
   '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
   
 ]
