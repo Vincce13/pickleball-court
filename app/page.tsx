@@ -136,7 +136,6 @@ function TodayAvailability() {
 
   const [loading, setLoading] = useState(true)
   const [slotStatuses, setSlotStatuses] = useState<{ slot: string; status: SlotStatus }[]>([])
-  const [showSchedule, setShowSchedule] = useState(false)
 
   // Keep "actualToday" correct even if the tab is left open across local
   // midnight — otherwise a visitor browsing at 11:59 PM would keep seeing
@@ -161,79 +160,79 @@ function TodayAvailability() {
   }
 
   useEffect(() => {
-  let cancelled = false
+    let cancelled = false
 
-  setLoading(true)
+    setLoading(true)
 
-  function addOneHourLocal(time: string) {
-    const [h, m] = time.split(':').map(Number)
-    return `${((h + 1) % 24).toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
-  }
-
-  function expandRange(start: string, end: string) {
-    const hours: string[] = []
-    let current = start.slice(0, 5)
-    const stop = end.slice(0, 5)
-    let guard = 0
-    while (current !== stop && guard < 24) {
-      hours.push(current)
-      current = addOneHourLocal(current)
-      guard++
+    function addOneHourLocal(time: string) {
+      const [h, m] = time.split(':').map(Number)
+      return `${((h + 1) % 24).toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
     }
-    return hours
-  }
 
-  Promise.all([
-    supabase
-      .from('bookings')
-      .select('start_time')
-      .eq('booking_date', selectedDate)
-      .neq('status', 'cancelled'),
-    supabase
-      .from('blocked_slots')
-      .select('start_time, end_time')
-      .eq('booking_date', selectedDate),
-    supabase
-      .from('open_play_sessions')
-      .select('start_time, end_time')
-      .eq('session_date', selectedDate)
-      .eq('status', 'active'),
-  ]).then(([bookingsRes, blockedRes, openPlayRes]) => {
-    if (cancelled) return
+    function expandRange(start: string, end: string) {
+      const hours: string[] = []
+      let current = start.slice(0, 5)
+      const stop = end.slice(0, 5)
+      let guard = 0
+      while (current !== stop && guard < 24) {
+        hours.push(current)
+        current = addOneHourLocal(current)
+        guard++
+      }
+      return hours
+    }
 
-    const bookedSlots = (bookingsRes.data ?? []).map((b) => b.start_time.slice(0, 5))
+    Promise.all([
+      supabase
+        .from('bookings')
+        .select('start_time')
+        .eq('booking_date', selectedDate)
+        .neq('status', 'cancelled'),
+      supabase
+        .from('blocked_slots')
+        .select('start_time, end_time')
+        .eq('booking_date', selectedDate),
+      supabase
+        .from('open_play_sessions')
+        .select('start_time, end_time')
+        .eq('session_date', selectedDate)
+        .eq('status', 'active'),
+    ]).then(([bookingsRes, blockedRes, openPlayRes]) => {
+      if (cancelled) return
 
-    const blockedHours = new Set<string>()
-    ;(blockedRes.data ?? []).forEach((b) => {
-      expandRange(b.start_time, b.end_time).forEach((h) => blockedHours.add(h))
+      const bookedSlots = (bookingsRes.data ?? []).map((b) => b.start_time.slice(0, 5))
+
+      const blockedHours = new Set<string>()
+      ;(blockedRes.data ?? []).forEach((b) => {
+        expandRange(b.start_time, b.end_time).forEach((h) => blockedHours.add(h))
+      })
+
+      const openPlayHours = new Set<string>()
+      ;(openPlayRes.data ?? []).forEach((s) => {
+        expandRange(s.start_time, s.end_time).forEach((h) => openPlayHours.add(h))
+      })
+
+      const now = new Date()
+      const isViewingToday = getLocalDateString(now) === selectedDate
+      const currentHour = now.getHours()
+
+      const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
+        const slotHour = Number(slot.split(':')[0])
+        if (bookedSlots.includes(slot)) return { slot, status: 'booked' }
+        if (openPlayHours.has(slot)) return { slot, status: 'openplay' }
+        if (blockedHours.has(slot)) return { slot, status: 'blocked' }
+        if (isViewingToday && slotHour < currentHour) return { slot, status: 'past' }
+        return { slot, status: 'available' }
+      })
+
+      setSlotStatuses(statuses)
+      setLoading(false)
     })
 
-    const openPlayHours = new Set<string>()
-    ;(openPlayRes.data ?? []).forEach((s) => {
-      expandRange(s.start_time, s.end_time).forEach((h) => openPlayHours.add(h))
-    })
-
-    const now = new Date()
-    const isViewingToday = getLocalDateString(now) === selectedDate
-    const currentHour = now.getHours()
-
-    const statuses: { slot: string; status: SlotStatus }[] = TIME_SLOTS.map((slot) => {
-      const slotHour = Number(slot.split(':')[0])
-      if (bookedSlots.includes(slot)) return { slot, status: 'booked' }
-      if (openPlayHours.has(slot)) return { slot, status: 'openplay' }
-      if (blockedHours.has(slot)) return { slot, status: 'blocked' }
-      if (isViewingToday && slotHour < currentHour) return { slot, status: 'past' }
-      return { slot, status: 'available' }
-    })
-
-    setSlotStatuses(statuses)
-    setLoading(false)
-  })
-
-  return () => {
-    cancelled = true
-  }
-}, [selectedDate])
+    return () => {
+      cancelled = true
+    }
+  }, [selectedDate])
 
   const availableCount = slotStatuses.filter((s) => s.status === 'available').length
   const isViewingToday = selectedDate === actualToday
@@ -250,7 +249,7 @@ function TodayAvailability() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 mb-2">
+      <div className="flex items-center gap-3 mb-4">
         <div className="w-10 h-10 rounded-full bg-[#9ED9B0]/10 flex items-center justify-center shrink-0">
           <CalendarCheck className="w-5 h-5 text-[#9ED9B0]" />
         </div>
@@ -270,58 +269,44 @@ function TodayAvailability() {
         </div>
       </div>
 
+      {/* Schedule always visible */}
       {!loading && (
         <div className="border-t border-white/10 pt-3">
-          <button
-            type="button"
-            onClick={() => setShowSchedule((v) => !v)}
-            className="w-full flex items-center justify-between text-xs uppercase tracking-wide text-[#8FB39B] hover:text-[#9ED9B0] transition-colors py-1"
-          >
-            <span>{showSchedule ? 'Hide' : 'View'} Schedule</span>
-            <ChevronDown
-              className={`w-4 h-4 transition-transform duration-300 ${showSchedule ? 'rotate-180' : ''}`}
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="date"
+              min={actualToday}
+              value={selectedDate}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] text-xs [color-scheme:dark] outline-none focus:border-[#9ED9B0]"
             />
-          </button>
+            {!isViewingToday && (
+              <button
+                type="button"
+                onClick={() => handleDateChange(actualToday)}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] text-xs font-medium transition-colors"
+              >
+                Today
+              </button>
+            )}
+          </div>
 
-          {showSchedule && (
-            <div className="mt-3 animate-fade-up">
-              <div className="flex items-center gap-2 mb-3">
-                <input
-                  type="date"
-                  min={actualToday}
-                  value={selectedDate}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/15 text-[#F1F2ED] text-xs [color-scheme:dark] outline-none focus:border-[#9ED9B0]"
-                />
-                {!isViewingToday && (
-                  <button
-                    type="button"
-                    onClick={() => handleDateChange(actualToday)}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-[#9ED9B0]/10 hover:bg-[#9ED9B0]/20 text-[#9ED9B0] text-xs font-medium transition-colors"
-                  >
-                    Today
-                  </button>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {slotStatuses.map(({ slot, status }) => (
-                  <span
-                    key={slot}
-                    className={`rounded-full border px-3 py-1 text-xs ${
-                      status === 'available'
-                        ? 'bg-green-500/10 border-green-500/30 text-[#9ED9B0]'
-                        : status === 'booked'
-                        ? 'bg-red-500/10 border-red-500/30 text-red-300 line-through'
-                        : 'bg-white/5 border-white/10 text-[#5A645E]'
-                    }`}
-                  >
-                    {formatSlotRange(slot)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {slotStatuses.map(({ slot, status }) => (
+              <span
+                key={slot}
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  status === 'available'
+                    ? 'bg-green-500/10 border-green-500/30 text-[#9ED9B0]'
+                    : status === 'booked'
+                    ? 'bg-red-500/10 border-red-500/30 text-red-300 line-through'
+                    : 'bg-white/5 border-white/10 text-[#5A645E]'
+                }`}
+              >
+                {formatSlotRange(slot)}
+              </span>
+            ))}
+          </div>
         </div>
       )}
     </div>
