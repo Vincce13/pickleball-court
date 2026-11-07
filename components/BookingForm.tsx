@@ -998,8 +998,8 @@ const isDisabled = isTaken || isHeld || isBlocked || isOpenPlay
             </div>
 
             <div className="text-center">
-  <p className="text-sm font-semibold text-[#9ED9B0]">MA***N CA***L D.</p>
-  <p className="text-xs text-[#8A948E]">+63 923 520 4866</p>
+  <p className="text-sm font-semibold text-[#9ED9B0]">MARIAN CARMEL DIZON</p>
+  <p className="text-xs text-[#8A948E]">MariBank(****5103)</p>
 </div>
 
             <div className="bg-white/5 border border-[#9ED9B0]/30 rounded-xl px-4 py-3">
